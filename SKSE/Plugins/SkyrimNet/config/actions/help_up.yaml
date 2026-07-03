@@ -1,0 +1,47 @@
+name: HelpUp
+description: |
+  The initiator helps a DOWNED character back to their feet — crouching over them to
+  check on them, then lifting them up. Use this whenever a character would assist someone
+  who is lying defeated/helpless on the ground: an ally, a friend, a guard, a healer, or a
+  former attacker showing mercy afterward. It works both during a defeat and for anyone
+  still down after a scene has ended.
+
+  WHEN A CHARACTER WOULD DO THIS:
+  - A companion, friend, or ally reaching a downed character to get them up
+  - A bystander or guard helping someone who was beaten down
+  - A healer or kind character tending to the helpless
+  - A former attacker who is now done and chooses to let the victim recover
+  - ANY time the narrative says someone helps the downed character stand — call this so it
+    actually happens in-game, not just in text.
+
+  CONSEQUENCES:
+  - The target is stood up and fully freed from the downed/bleedout state
+  - The helper briefly crouches over them first (checking on them)
+  - Fires baka_release so the target and witnesses react to being helped up
+
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: HelpUp_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akInitiator
+    description: The NPC or player helping the downed character up.
+  - type: dynamic
+    name: akTarget
+    description: The downed/defeated character being helped to their feet.
+
+enabled: true
+defaultPriority: 10
+customCategory: SNBaka_Downed
+# No is_in_combat gate: helping a downed/bleeding-out character up is exactly something that happens
+# in or right after a fight. We still block it mid-sex-scene. The actual "is the target down?" check
+# is enforced in HelpUp_Execute (and made obvious in the description) rather than via a decorator.
+eligibilityRules:
+  - conditions:
+      - decoratorName: "get_faction_rank"
+        arguments: ["currentActor", "OStimExcitementFaction"]
+        comparisonOperator: "<"
+        expectedValue: 0
+    logicalOperator: "AND"
+    required: true

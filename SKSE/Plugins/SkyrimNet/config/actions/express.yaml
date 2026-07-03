@@ -1,15 +1,17 @@
-name: express_pained
+name: Express
 description: |
-  The speaker's face contorts in pain — clenched, grimacing, hurt — for a few seconds.
+  The speaker's face shows an emotion for a few seconds: happy, sad, angry, afraid, confused, or
+  surprised/pained.
 
-  USE WHEN: the speaker is in physical pain or discomfort right now — struck, injured,
-  restrained roughly, exhausted, or enduring something that hurts.
+  USE WHEN: the speaker feels or wants to convey that emotion right now — greeting someone they
+  like, being insulted or threatened, hearing something shocking, feeling hurt or rejected, being
+  struck or restrained, or working something out and doubting what they heard.
 
   Purely a facial expression — no body movement, no dialogue. It fades on its own.
 
 questEditorId: SkyrimNet_BakaIntegration
 scriptName: SkyrimNet_BakaIntegration
-executionFunctionName: ExpressPained_Execute
+executionFunctionName: Express_Execute
 
 parameterMapping:
   - type: speaker
@@ -18,6 +20,9 @@ parameterMapping:
   - type: speaker
     name: akTarget
     description: Who they are reacting to (optional context; not required)
+  - type: dynamic
+    name: mood
+    description: "One of: happy, sad, angry, afraid, confused, surprised, pained"
 
 enabled: true
 defaultPriority: 2
@@ -32,14 +37,7 @@ eligibilityRules:
     required: true
   - conditions:
       - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "SexLabAnimatingFaction"]
-        comparisonOperator: "<"
-        expectedValue: 0
-    logicalOperator: "AND"
-    required: true
-  - conditions:
-      - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "OStimActorCountFaction"]
+        arguments: ["currentActor", "OStimExcitementFaction"]
         comparisonOperator: "<"
         expectedValue: 0
     logicalOperator: "AND"

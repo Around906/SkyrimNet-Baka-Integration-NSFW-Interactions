@@ -24,8 +24,17 @@ Event OnEffectStart(Actor akTarget, Actor akCaster)
         Return
     EndIf
 
-    ; Otherwise resolve the real NPC the player is aiming at (crosshair / nearest).
+    ; Resolve the actor the player is aiming at (crosshair, then nearest). Includes creatures.
     Actor realTarget = SNBakaUI.GetInteractTarget()
+
+    ; Aim at a BEAST -> creature escalation on the nearest valid victim (handles its own gating).
+    ; Returns True only if it WAS a supported creature, so we stop here.
+    If realTarget && BakaMain.TryCreatureEscalateFromPower(realTarget)
+        If dbg
+            Debug.Notification("[Baka] power: creature escalation -> " + realTarget.GetDisplayName())
+        EndIf
+        Return
+    EndIf
     If !realTarget
         If dbg
             Debug.Notification("[Baka] power pressed — no target on the crosshair")

@@ -7,55 +7,12 @@ eventCriteria:
 response:
   type: "direct_narration"
   content: |
-    {{ target }} has been completely overpowered. They lie on the ground — unable
-    to get up, unable to fight back. {{ originator }} stands over them.
-
-    This is a moment of absolute power over another person. Generate the raw,
-    unresolved beat of this instant — what {{ originator }} does with that power.
-
-    ── CHARACTER REALISM — READ THIS CAREFULLY ──────────────────────────────────
-
-    Sexual violence is a specific, extreme act driven by specific psychology.
-    Overpowering someone in a fight is NOT the same as wanting to assault them.
-    Most people — even brutal, cruel, or villainous ones — would not cross that line.
-
-    {{ originator }} should WALK AWAY, show restraint, or react with discomfort if they are:
-    - A guard, soldier, rival, or competitive personality who fought for dominance, not sex
-    - Someone with a personal moral code, even a harsh or ruthless one
-    - A character who is cruel or violent but does not have sexual predation as an established trait
-    - Someone who feels guilt, conflict, or disgust about what they just did
-    - Anyone who respects a line between physical violence and sexual assault
-    - The vast majority of characters — this is the DEFAULT response
-
-    {{ originator }} MIGHT escalate (using the Escalate action) ONLY if they are:
-    - A genuinely predatory character for whom sexual violence is an already-established
-      part of their characterisation — from lore, prior dialogue, or explicit backstory
-    - A character who expressed intent to assault BEFORE the scene began
-    - A character whose established personality leaves no room for hesitation on this
-
-    This should be RARE. The wrong choice here breaks character immersion badly.
-    When in doubt, do not escalate. A monster who hesitates is more interesting
-    than one who doesn't.
-
-    ─────────────────────────────────────────────────────────────────────────────
-
-    Consider:
-    - What does {{ originator }} actually feel in this instant?
-      Adrenaline, discomfort, cold satisfaction, revulsion at themselves,
-      indifference, or something they do not want to name?
-    - What does {{ target }} experience?
-      Terror, dissociation, a desperate plea, defiant silence, bargaining?
-    - Are there witnesses? What do they do — intervene, look away, freeze?
-
-    One to two beats only. This is the charged moment before a decision — not the
-    decision itself. Do not resolve it. Match every character's personality exactly.
-
-    If and only if escalation fits {{ originator }}'s established character
-    beyond reasonable doubt, use the Escalate action on {{ target }}.
+    {{ target }} is down{% if originator %}, beaten by {{ originator }}{% endif %}. Nearby actors might
+    use — call the action, don't just narrate — PinHelpless, ChokeHelpless, HelpUp, or Release.
 
 audience: "nearby_npcs"
 
 enabled: true
 probability: 1
-cooldownSeconds: 10
+cooldownSeconds: 30
 priority: 10

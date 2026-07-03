@@ -1,0 +1,41 @@
+name: Capture
+description: |
+  The initiator takes a DOWNED, defeated character PRISONER instead of killing, robbing, or walking
+  away. This ENDS the fight: the captor stops being hostile and will not attack the captive anymore,
+  the victim is brought up out of the bleeding-out/downed state, and from now on they are captor and
+  captive — master and prisoner / slave.
+
+  Use this when a character wants to KEEP the defeated one rather than finish them: a slaver or bandit
+  taking a prize, "you're mine now," dragging them back to camp, claiming them as property, a captor
+  who wants them alive and owned. This is the clean way to turn a won fight into an ongoing captivity
+  roleplay rather than just letting combat resume.
+
+  CONSEQUENCES:
+  - The fight is OVER — the captor no longer attacks the captive (they are no longer enemies).
+  - The captive is stood up out of the defeated state, now a prisoner at the captor's mercy.
+  - Establishes the captor/captive (owner/property) relationship for roleplay — bind, lead away, use.
+  - To make them physically travel together, the captor can then use a follow/escort action.
+
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: Capture_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akCaptor
+    description: The character taking the defeated one prisoner.
+  - type: dynamic
+    name: akVictim
+    description: The downed/defeated character being captured.
+
+enabled: true
+defaultPriority: 8
+customCategory: SNBaka_Downed
+eligibilityRules:
+  - conditions:
+      - decoratorName: "get_faction_rank"
+        arguments: ["currentActor", "OStimExcitementFaction"]
+        comparisonOperator: "<"
+        expectedValue: 0
+    logicalOperator: "AND"
+    required: true

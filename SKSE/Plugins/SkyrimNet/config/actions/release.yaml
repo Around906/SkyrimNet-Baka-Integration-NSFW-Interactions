@@ -2,15 +2,16 @@ name: Release
 description: |
   The initiator chooses NOT to escalate against the downed victim — they step back
   and let the moment pass. The victim is freed immediately from the defeat state.
-  This action is only valid during the brief window after a QTE defeat while the
-  victim is lying helpless on the ground (SNBaka.OnGround = 1).
+  Valid any time the target reads as downed/defeated (a Baka QTE defeat, a combat
+  bleedout, or an Acheron-held victim) — not just Baka's own ground window.
 
   DECISION CONTEXT — THIS IS A FORCED CHOICE MOMENT:
-  When SNBaka.OnGround is 1 on the target, the attacker MUST choose between
-  Escalate or Release. This is not optional narration — it is the active decision
-  window. The attacker has overpowered the victim and now decides what to do next.
-  Pick one or the other. Do not stay silent. Use Release if the character would
-  hold back for any reason — guilt, risk, honour, or the victim's reaction.
+  When the target is downed, the attacker MUST choose exactly ONE of three outcomes:
+  Rape (force them into sex), HelpUp (show mercy, stand them up), or Release (this
+  action — step back, let the moment pass). This is not optional narration — it is the
+  active decision window. Pick one. Do not stay silent. Use Release if the character
+  would hold back for any reason — guilt, risk, honour, or the victim's reaction, but
+  isn't moved enough to actively help them up.
 
   WHEN A CHARACTER WOULD DO THIS:
   - An NPC who overpowered the target but feels guilt, hesitation, or mercy
@@ -26,8 +27,8 @@ description: |
   - Responsive to the victim's emotional state
 
   DO NOT USE:
-  - If the target is not currently on the ground (SNBaka.OnGround must be 1)
-  - If the character has already committed to escalation (use Escalate instead)
+  - If the target is not currently downed/defeated
+  - If the character has already committed to it (use Rape instead)
   - As a default non-action — this is a deliberate choice with narrative weight
 
   CONSEQUENCES:
@@ -50,25 +51,11 @@ parameterMapping:
 
 enabled: true
 defaultPriority: 9
-customCategory: SNBaka_Scene
+customCategory: SNBaka_Downed
 eligibilityRules:
   - conditions:
-      - decoratorName: "is_in_combat"
-        arguments: ["currentActor"]
-        comparisonOperator: "=="
-        expectedValue: false
-    logicalOperator: "AND"
-    required: true
-  - conditions:
       - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "SexLabAnimatingFaction"]
-        comparisonOperator: "<"
-        expectedValue: 0
-    logicalOperator: "AND"
-    required: true
-  - conditions:
-      - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "OStimActorCountFaction"]
+        arguments: ["currentActor", "OStimExcitementFaction"]
         comparisonOperator: "<"
         expectedValue: 0
     logicalOperator: "AND"

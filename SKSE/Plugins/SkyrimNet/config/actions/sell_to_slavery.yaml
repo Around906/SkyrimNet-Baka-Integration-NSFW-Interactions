@@ -1,0 +1,37 @@
+name: SellToSlavery
+description: |
+  The captor decides the defeated character is worth more sold than kept — and hauls them off to a
+  slave auction. Use when a slaver, bandit, or opportunist wants to PROFIT from the defeated rather
+  than keep, kill, or free them ("you'll fetch a good price", "off to the block with you").
+
+  Requires the Simple Slavery Plus Plus mod for the player to actually be sent to the auction; if it
+  isn't installed this is just narrative. (Only the player can be auctioned; for a defeated NPC it is
+  played out in narration.)
+
+  CONSEQUENCES:
+  - The fight ends and the player is handed to the Simple Slavery auction (if installed).
+  - A clean way to resolve a defeat into an enslavement storyline instead of resuming combat.
+
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: SellToSlavery_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akSeller
+    description: The character selling the defeated one into slavery.
+  - type: dynamic
+    name: akVictim
+    description: The downed/defeated character being sold.
+
+enabled: true
+defaultPriority: 7
+customCategory: SNBaka_Downed
+eligibilityRules:
+  - conditions:
+      - decoratorName: "get_faction_rank"
+        arguments: ["currentActor", "OStimExcitementFaction"]
+        comparisonOperator: "<"
+        expectedValue: 0
+    logicalOperator: "AND"
+    required: true

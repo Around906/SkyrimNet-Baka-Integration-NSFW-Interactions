@@ -1,0 +1,21 @@
+# Combat-PERMISSIVE category for actions used on a DOWNED / defeated / helpless character.
+# Defined in YAML (like SeverActions' cat_*.yaml) so it has NO category-level combat lambda — unlike
+# the DLL-registered SNBaka_Scene, which gates on NotInCombat and therefore HID escalate/help-up/etc.
+# whenever the acting NPC was still in combat with the (alive, bleeding-out) victim. The per-action
+# eligibilityRules + the Papyrus exec (which no-ops unless the target is actually downed) do the gating.
+#
+# MUST STAY enabled: true. Tried disabling this (both with and without actionType: category, matching
+# SeverActions' cat_companion.yaml) to stop the LLM from picking bare "Down" with a dead-end
+# {"intent": "..."} payload — confirmed via before/after log diffs that enabled: false, REGARDLESS of
+# actionType, strips every member action (Rape, HelpUp, Release, Harass, CapturedInspect, ChokeHelpless,
+# Capture, SellToSlavery) out of SkyrimNet's rendered "## Eligible Actions" menu entirely — the only
+# place these actions are ever offered to the LLM with correct call syntax. EligibilityChecker still
+# reports them individually eligible when disabled, but they never actually render, so the LLM can
+# never see or call them. Sever's Command category can get away with enabled: false because those
+# actions are invoked through native action choice, not this freeform embedded-action menu; ours can't.
+# The rare "LLM picks bare Down with an intent payload that goes nowhere" dead end is a much smaller
+# cost than losing the entire action group, so we accept it and leave this enabled.
+customCategory: SNBaka_Downed
+name: Down
+description: "Actions taken on a character who is DOWNED, defeated, and helpless on the ground (a Baka defeat or anything left bleeding out): force themselves on them, help them back up, release them, harass or grope them. Valid even while still nominally in combat, because the victim is alive and helpless."
+enabled: true

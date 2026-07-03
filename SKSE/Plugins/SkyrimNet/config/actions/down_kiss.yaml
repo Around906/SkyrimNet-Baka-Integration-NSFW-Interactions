@@ -1,0 +1,26 @@
+name: KissHelpless
+description: |
+  Force a kiss on a DOWNED, helpless victim while they lie defeated on the ground — a coercive, dominating act on a beaten target who cannot push them away. Valid even while combat is live.
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: ForcedKiss_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akInitiator
+    description: The aggressor acting on the downed, helpless victim.
+  - type: dynamic
+    name: akTarget
+    description: The defeated victim lying helpless on the ground.
+
+enabled: true
+defaultPriority: 2
+customCategory: SNBaka_Downed
+eligibilityRules:
+  - conditions:
+      - decoratorName: "get_faction_rank"
+        arguments: ["currentActor", "OStimExcitementFaction"]
+        comparisonOperator: "<"
+        expectedValue: 0
+    logicalOperator: "AND"
+    required: true

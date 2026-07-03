@@ -1,16 +1,17 @@
-﻿name: Investigate
+﻿name: Harass
 description: |
-  The initiator conducts a thorough three-stage investigative inspection of the target —
-  methodical, clinical, and invasive. Each stage examines a different aspect of the target's
-  body. The target panics and cannot resist. This differs from CapturedInspect in tone:
-  the initiator is gathering information or performing due diligence, not merely degrading.
+  Note: this is a SEXUAL act — an invasive, groping body-search of a helpless person, dressed up as an
+  "investigation" or "inspection" but really harassment. Choose it knowing it's lewd and degrading.
+
+  The initiator conducts a thorough three-stage invasive groping of the target's body, framed as duty,
+  procedure, or curiosity. The target panics and cannot resist.
 
   WHEN A CHARACTER WOULD DO THIS:
-  - A mage or scholar examining a captive for magical properties or physical traits
-  - A guard or authority figure conducting a humiliating search for contraband
-  - A clinical or detached character performing an inspection without emotion
+  - A mage or scholar using "examination" as an excuse to grope a captive
+  - A guard or authority figure using a "search for contraband" as cover for harassment
+  - A clinical or detached character who hides groping behind a procedural pretense
   - A character who frames violation as duty or procedure rather than cruelty
-  - An interrogator gathering physical evidence or performing a medical-style assessment
+  - An interrogator using a "medical assessment" as an excuse to grope the target
 
   PERSONALITY TYPES WHO WOULD DO THIS:
   - Clinical, methodical, and detached — this is business, not pleasure
@@ -19,13 +20,13 @@ description: |
   - Cold and professional — no obvious sadism, but equally no compassion
 
   DO NOT USE:
-  - On male-body targets — this investigation involves intimate anatomical inspection and requires a female body
-  - Without a clear authority or procedural framing
+  - On male-body targets — this involves intimate anatomical groping and requires a female body
+  - Without a clear authority or procedural pretense to hide behind
   - As an impulsive act — this is deliberate and staged
   - In non-captive or non-power-over contexts
 
   CONSEQUENCES:
-  - Three-stage progressive inspection animation
+  - Three-stage progressive groping animation
   - Target panics throughout — they know exactly what is happening
   - Fires baka_panic event — deep psychological violation dressed as procedure
   - The clinical tone makes this especially dehumanizing
@@ -37,32 +38,18 @@ executionFunctionName: Investigate_Execute
 parameterMapping:
   - type: speaker
     name: akInitiator
-    description: The NPC performing the investigation.
+    description: The NPC performing the harassment.
   - type: dynamic
     name: akTarget
-    description: The person being investigated — player or nearby NPC.
+    description: The person being harassed — player or nearby NPC.
 
 enabled: true
-defaultPriority: 2
-customCategory: SNBaka_Scene
+defaultPriority: 1
+customCategory: SNBaka_Downed
 eligibilityRules:
   - conditions:
-      - decoratorName: "is_in_combat"
-        arguments: ["currentActor"]
-        comparisonOperator: "=="
-        expectedValue: false
-    logicalOperator: "AND"
-    required: true
-  - conditions:
       - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "SexLabAnimatingFaction"]
-        comparisonOperator: "<"
-        expectedValue: 0
-    logicalOperator: "AND"
-    required: true
-  - conditions:
-      - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "OStimActorCountFaction"]
+        arguments: ["currentActor", "OStimExcitementFaction"]
         comparisonOperator: "<"
         expectedValue: 0
     logicalOperator: "AND"

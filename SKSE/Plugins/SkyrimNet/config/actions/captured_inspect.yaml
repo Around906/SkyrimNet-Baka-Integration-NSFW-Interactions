@@ -1,9 +1,10 @@
 ﻿name: CapturedInspect
 description: |
-  The initiator forces the target through a three-stage full-body inspection: a general
-  capture pose, then chest examination, then intimate lower-body examination. The target
-  cannot resist and will panic throughout. This is a degrading, multi-stage violation
-  used to assess or humiliate a captive.
+  Note: this is a SEXUAL act — forcibly groping a helpless captive's chest and between their legs, not
+  a neutral inspection. Choose it knowing it's lewd and degrading.
+
+  The initiator forces the target through a three-stage full-body molestation: a general capture pose,
+  then chest, then intimate lower-body. The target cannot resist and panics throughout.
 
   WHEN A CHARACTER WOULD DO THIS:
   - A slaver evaluating a new captive's worth
@@ -43,26 +44,12 @@ parameterMapping:
     description: The person being inspected against their will — player or nearby NPC.
 
 enabled: true
-defaultPriority: 2
-customCategory: SNBaka_Scene
+defaultPriority: 1
+customCategory: SNBaka_Downed
 eligibilityRules:
   - conditions:
-      - decoratorName: "is_in_combat"
-        arguments: ["currentActor"]
-        comparisonOperator: "=="
-        expectedValue: false
-    logicalOperator: "AND"
-    required: true
-  - conditions:
       - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "SexLabAnimatingFaction"]
-        comparisonOperator: "<"
-        expectedValue: 0
-    logicalOperator: "AND"
-    required: true
-  - conditions:
-      - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "OStimActorCountFaction"]
+        arguments: ["currentActor", "OStimExcitementFaction"]
         comparisonOperator: "<"
         expectedValue: 0
     logicalOperator: "AND"

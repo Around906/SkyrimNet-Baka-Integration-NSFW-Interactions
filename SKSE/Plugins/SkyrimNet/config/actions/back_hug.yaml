@@ -52,14 +52,7 @@ eligibilityRules:
     required: true
   - conditions:
       - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "SexLabAnimatingFaction"]
-        comparisonOperator: "<"
-        expectedValue: 0
-    logicalOperator: "AND"
-    required: true
-  - conditions:
-      - decoratorName: "get_faction_rank"
-        arguments: ["currentActor", "OStimActorCountFaction"]
+        arguments: ["currentActor", "OStimExcitementFaction"]
         comparisonOperator: "<"
         expectedValue: 0
     logicalOperator: "AND"

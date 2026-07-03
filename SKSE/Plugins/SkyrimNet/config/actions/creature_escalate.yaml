@@ -1,0 +1,44 @@
+name: CreatureEscalate
+description: |
+  A BEAST (wolf, dog, falmer, troll, bear, sabre cat, draugr, spider, chaurus, riekling, etc.) forces
+  itself sexually on a vulnerable human — pinning and mounting them. This is the ONLY thing creatures
+  do here; they have no other interactions.
+
+  USE WHEN one actor is a creature and the other is a human who is helpless or being overwhelmed:
+  - The human is DOWNED / bleeding out / defeated (their get_baka_state shows
+    "downed_and_vulnerable": true) — a beast standing over them takes the opening.
+  - OR, mid-fight, the human is clearly LOSING — frightened, badly hurt, cornered, fleeing — and the
+    beast is right on top of them.
+
+  Pick the creature as one actor and the human victim as the other (order does not matter). Against an
+  NPC it may or may not succeed (it can be fought off); against the player it triggers a struggle QTE.
+  A hit during it frees the victim and resumes the fight.
+
+  DO NOT USE:
+  - If neither actor is a creature (use the human escalate/actions instead).
+  - On a healthy human standing their ground in open combat (they are not vulnerable yet).
+  - If the scene would be consensual or affectionate — this is forced.
+
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: CreatureEscalate_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akInitiator
+    description: One side of the pairing — the creature, or the human (the script sorts out which is the beast).
+  - type: dynamic
+    name: akTarget
+    description: The other side — the human victim, or the creature.
+
+enabled: true
+defaultPriority: 2
+customCategory: SNBaka_Creature
+eligibilityRules:
+  - conditions:
+      - decoratorName: "get_faction_rank"
+        arguments: ["currentActor", "OStimExcitementFaction"]
+        comparisonOperator: "<"
+        expectedValue: 0
+    logicalOperator: "AND"
+    required: true

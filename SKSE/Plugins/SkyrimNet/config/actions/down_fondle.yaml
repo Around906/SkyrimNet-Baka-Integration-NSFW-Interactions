@@ -1,0 +1,26 @@
+name: FeelPrivates
+description: |
+  Touch and fondle the genitals/privates of a DOWNED, helpless victim while they lie defeated on the ground. A SEXUAL, degrading violation of a beaten target who cannot resist. Valid even mid-combat.
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: FondlePussy_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akInitiator
+    description: The aggressor acting on the downed, helpless victim.
+  - type: dynamic
+    name: akTarget
+    description: The defeated victim lying helpless on the ground.
+
+enabled: true
+defaultPriority: 2
+customCategory: SNBaka_Downed
+eligibilityRules:
+  - conditions:
+      - decoratorName: "get_faction_rank"
+        arguments: ["currentActor", "OStimExcitementFaction"]
+        comparisonOperator: "<"
+        expectedValue: 0
+    logicalOperator: "AND"
+    required: true

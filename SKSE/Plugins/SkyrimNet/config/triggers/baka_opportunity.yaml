@@ -1,5 +1,5 @@
 name: "baka_opportunity"
-description: "A victim is helpless and recovering on the ground after a violent or coercive Baka Motion scene. The originator — and any nearby NPC — may choose to escalate."
+description: "A victim is helpless and recovering on the ground after a violent or coercive Baka Motion scene. The originator — and any nearby NPC — may choose to escalate, help, or ignore."
 
 eventCriteria:
   eventType: "baka_opportunity"
@@ -7,29 +7,12 @@ eventCriteria:
 response:
   type: "direct_narration"
   content: |
-    {{ target }} is on the ground — helpless, recovering, unable to resist.
-    {{ originator }} stands over them with complete dominance in this moment.
-
-    Generate the immediate beat of what happens next. This is the window after
-    violence where the power dynamic is absolute. Consider:
-
-    - What does {{ originator }} do with this moment?
-      Do they savor it? Issue a threat? Make a demand? Walk away indifferently?
-      Do they hesitate — surprised by their own capacity for this?
-    - What does {{ target }} experience?
-      A desperate attempt to get up? Dissociation? Quiet, resigned submission?
-      Raw fear? Defiance through gritted teeth?
-    - What do nearby characters do?
-      A companion might intervene. Another villain might move in.
-      If SexLab is available and the scene warrants it, {{ originator }} or a
-      nearby NPC may choose to escalate to a sexual assault.
-
-    One to two beats only. This is a charged, unresolved moment — not a resolution.
-    Match every character's personality exactly. Power dynamics are absolute here.
+    {{ originator }} decides — call the action, don't just narrate: Rape (the Rape action — never
+    StartNewSex), HelpUp, or Release.
 
 audience: "nearby_npcs"
 
 enabled: true
 probability: 1
-cooldownSeconds: 30
+cooldownSeconds: 5
 priority: 10

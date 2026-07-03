@@ -69,6 +69,7 @@ runtimes. (VR additionally needs SkyrimNet and PrismaUI themselves to work in VR
 
 **Optional (degrades gracefully if absent)**
 - [Flash Games – Struggling QTE](https://www.nexusmods.com/skyrimspecialedition/mods/121909), [Dynamic Feminine Female Modesty Animations OAR](https://www.nexusmods.com/skyrimspecialedition/mods/104374)
+- **SeverActions – SkyrimNet Action Pack** — *recommended for the downed/capture flow.* Not called by this mod and not a hard requirement, but its actions are automatically available to the LLM when installed, giving captors richer consequences on a beaten target: cease fighting, adjust relationship, take prisoner / arrest, add to debt or demand a ransom, transfer to a retainer, dismiss/recruit. The Baka downed cues invite these outcomes, so they "just work" alongside Baka's own choke/pin/grope/escalate actions.
 
 ## Installation
 
