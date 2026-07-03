@@ -70,6 +70,8 @@ runtimes. (VR additionally needs SkyrimNet and PrismaUI themselves to work in VR
 **Optional (degrades gracefully if absent)**
 - [Flash Games – Struggling QTE](https://www.nexusmods.com/skyrimspecialedition/mods/121909), [Dynamic Feminine Female Modesty Animations OAR](https://www.nexusmods.com/skyrimspecialedition/mods/104374)
 - **SeverActions – SkyrimNet Action Pack** — *recommended for the downed/capture flow.* Not called by this mod and not a hard requirement, but its actions are automatically available to the LLM when installed, giving captors richer consequences on a beaten target: cease fighting, adjust relationship, take prisoner / arrest, add to debt or demand a ransom, transfer to a retainer, dismiss/recruit. The Baka downed cues invite these outcomes, so they "just work" alongside Baka's own choke/pin/grope/escalate actions.
+- **Simple Slavery Plus Plus (SS++)** — *required for the `SellToSlavery` action to actually do anything.* This mod hands off to SS++'s own "SSLV Entry" mod event; without it installed, `SellToSlavery` just narrates the capture and nothing mechanical happens (no crash, no error, just no auction).
+- **SkyrimNet Acheron Integration** — a separate, optional companion addon that manages the ongoing "downed" hold/recovery state after a combat defeat (as opposed to Baka's own QTE-based defeats, which this mod always handles by itself). **Baka Integration works fully standalone without it.** When both are installed, they hand a downed victim back and forth and even coordinate on creature encounters — but neither one requires the other.
 
 ## Installation
 
