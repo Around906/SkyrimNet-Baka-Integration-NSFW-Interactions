@@ -1,0 +1,32 @@
+name: EnslaveFollower
+description: |
+  An NPC drags the player's DEFEATED FOLLOWER away into slavery (Follower Slavery Mod). Use when a
+  slaver, bandit, or opportunist claims a helpless follower as property while the player cannot stop
+  it — the captor becomes (or arranges) the follower's new master.
+
+  STRICT LIMITS — do NOT confuse this with SellToSlavery:
+  - SellToSlavery targets the DEFEATED PLAYER (Simple Slavery auction). NEVER this action.
+  - EnslaveFollower targets ONLY a downed FOLLOWER of the player — never the player themselves —
+    and ONLY while the player is far away or also defeated. If the player is standing nearby and
+    able to intervene, this action will refuse.
+
+  CONSEQUENCES:
+  - The follower is removed from the player's party and enslaved through the Follower Slavery Mod's
+    own questline. This is a lasting change until they are rescued/freed through that mod.
+  - The fight over the follower is resolved — the captor stops fighting to claim their prize.
+
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: EnslaveFollower_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akCaptor
+    description: The NPC taking the downed follower into slavery. Never the player.
+  - type: dynamic
+    name: akFollower
+    description: The DOWNED follower of the player being enslaved. Never the player.
+
+enabled: true
+defaultPriority: 6
+customCategory: SNBaka_Downed

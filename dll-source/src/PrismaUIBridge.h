@@ -14,6 +14,13 @@ public:
     static void RequestAPI() noexcept;
     static void CreateMenuView() noexcept;
     static bool IsAvailable() noexcept;
+
+    // Separate, always-on ambient overlay view (never Focus()'d/paused, unlike the modal wizard views
+    // above) -- same pattern as Ostim_interactions' OII_Hud. Currently just the get-up-key charge bar,
+    // but any future passive HUD element belongs here, not on s_view.
+    static void CreateHudView() noexcept;
+    // Updates the get-up-key "charging toward 3s" bar. pct in [0,1]; negative hides it.
+    static void SetGetUpCharge(float pct) noexcept;
     static bool IsMenuOpen() noexcept;
     static void CancelMenu() noexcept;
     static void ShowInteractMenu(RE::Actor* caster, RE::Actor* target) noexcept;
@@ -24,18 +31,24 @@ public:
     // (or "cancel") and are dispatched to Papyrus _StartSexLabScene with these actors.
     static void ShowEncounterMenu(RE::Actor* aggressor, RE::Actor* victim) noexcept;
 
+    // Downed-victim menu (Escalate / Investigate / Inspect / Stand Back / Help Up). The pick
+    // comes back to Papyrus _DispatchDownedAction(choice, caster, victim).
+    static void ShowDownedMenu(RE::Actor* caster, RE::Actor* victim) noexcept;
+
     // Resolves the NPC the player is targeting (crosshair, then nearest-actor
     // fallback).  Returns nullptr if none / only the player.  Called from
     // OnEffectStart so Papyrus runs its sex/escalate/interact checks on the
     // real target even though the spell is self-delivered.
     static RE::Actor* GetInteractTarget() noexcept;
 
-    // Clear the player-teammate flag on every actor we previously flagged.
+    // Restore original Havok bumper-capsule radius on every actor we previously shrank.
     // Called on game load to clean up anything left dangling after a crash/reload.
     static void RestoreTrackedCollision() noexcept;
 
-    // Toggle character-to-character collision on a single actor (layer swap).
-    // Called per-animation from Papyrus for both participants.
+    // Shrinks (disable=true) or restores (disable=false) an actor's Havok character-bumper
+    // capsule -- the shape responsible for pushing other actors away when they get close.
+    // Called per-animation from Papyrus for both participants so a paired sequence doesn't
+    // shove them apart.
     static void SetActorCollision(RE::Actor* actor, bool disable) noexcept;
 
     // True if the furniture is an alchemy lab or enchanting table (incl. experiment
@@ -45,11 +58,12 @@ public:
 private:
     static void OnJSChoice(const char* value) noexcept;
 
-    enum class MenuMode { None, Interact, SexSpank, Encounter };
+    enum class MenuMode { None, Interact, SexSpank, Encounter, Downed };
 
     static inline PRISMA_UI_API::IVPrismaUI1* s_prisma = nullptr;
     static inline PRISMA_UI_API::IVPrismaUI2* s_prismav2 = nullptr;
     static inline PrismaView                  s_view   = 0;
+    static inline PrismaView                  s_hudView = 0;
     static inline std::atomic<MenuMode>       s_mode   = MenuMode::None;
 
     // When Papyrus-side sex scene detection returns no NPCs we fall back to a
@@ -69,4 +83,8 @@ private:
     // Encounter actors captured at menu-open, used when the spec comes back.
     static inline RE::FormID s_encAggressor = 0;
     static inline RE::FormID s_encVictim    = 0;
+
+    // Downed-menu actors captured at menu-open, used when the choice comes back.
+    static inline RE::FormID s_downedCaster = 0;
+    static inline RE::FormID s_downedVictim = 0;
 };

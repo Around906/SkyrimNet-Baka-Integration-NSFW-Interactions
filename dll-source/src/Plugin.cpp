@@ -1,5 +1,6 @@
 #include <spdlog/sinks/basic_file_sink.h>
 
+#include "HitEventSink.h"
 #include "PapyrusFunctions.h"
 #include "PrismaUIBridge.h"
 #include "SkyrimNetBridge.h"
@@ -77,8 +78,11 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
             // matching the known-good behaviour.  ShowInteractMenu self-heals
             // lazily if PrismaUI ever reports the view invalid.
             PrismaUIBridge::CreateMenuView();
+            PrismaUIBridge::CreateHudView();
             RE::BSInputDeviceManager::GetSingleton()->AddEventSink(MenuInputHandler::GetSingleton());
             SKSE::log::info("Input handler registered.");
+            RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESHitEvent>(HitEventSink::GetSingleton());
+            SKSE::log::info("Hit event sink registered.");
             // Resolve SkyrimNet's C++ API and register our action categories.
             SkyrimNetBridge::Init();
             break;

@@ -103,3 +103,16 @@ Int Function StartScene(Actor[] akActors, Actor akVictim, Actor akAggressor, Str
     ; anims may be None/empty here -> SexLab picks from everything.
     Return sl.StartSex(akActors, anims, akVictim, akAggressor, True, "")
 EndFunction
+
+; Force-end a running scene immediately (Quickly=true skips the normal fade/orgasm wind-down) --
+; used when real combat resumes around an animating actor and the scene has to stop right now rather
+; than wait for it to end on its own.
+Function StopScene(Int tid) Global
+    SexLabFramework sl = _SL()
+    If sl && tid >= 0
+        sslThreadController tc = sl.GetController(tid)
+        If tc
+            tc.EndAnimation(true)
+        EndIf
+    EndIf
+EndFunction

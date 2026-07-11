@@ -542,7 +542,7 @@ window.snbaka_open_encounter = function(json) {
 
 // targetName = victim display name.  Single-step list (reuses the encounter
 // container) of the four downed-victim choices.  Picks dispatch straight to
-// _DispatchDownedAction via _choose:  0 Escalate · 1 Investigate · 2 Inspect · 3 Stand Back.
+// _DispatchDownedAction via _choose:  0 Escalate · 1 Investigate · 2 Inspect · 3 Stand Back · 4 Help Up.
 window.snbaka_open_downed = function(targetName) {
   g_mode = 'downed';
   _el('header-label').textContent  = 'Downed';
@@ -568,6 +568,7 @@ window.snbaka_open_downed = function(targetName) {
     { t: 'Investigate', v: 1 },
     { t: 'Inspect',     v: 2 },
     { t: 'Stand Back',  v: 3 },
+    { t: 'Help Up',     v: 4 },
   ];
   grid.style.gridTemplateColumns = 'repeat(' + _gridCols(DOWNED.length) + ', 1fr)';
   DOWNED.forEach(opt => {

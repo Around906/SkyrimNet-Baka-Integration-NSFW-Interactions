@@ -7,8 +7,9 @@ eventCriteria:
 response:
   type: "direct_narration"
   content: |
-    {{ originator }} decides — call the action, don't just narrate: Rape (the Rape action — never
-    StartNewSex), HelpUp, or Release.
+    {{ originator }} can talk to them first — interrogate, threaten, mock, demand their surrender or
+    belongings — but must still decide now: call the action, don't just narrate: Escalate (the Escalate
+    action — never StartNewSex), HelpUp, or Release.
 
 audience: "nearby_npcs"
 

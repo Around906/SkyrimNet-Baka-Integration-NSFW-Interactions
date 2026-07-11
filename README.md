@@ -44,11 +44,30 @@ characters striking fitting body language while they speak.
   - Drug-food &amp; drunk exploit (incapacitate), womb hit
   - Forced kiss, fondle, touch / suck breasts, oral, examine / inspect
 - **Escalation → SexLab or OStim** aggressive scenes, with defeat / bleedout &amp; recovery
+- **Creature encounters (opt-in, OFF by default)** — supported creature types (falmer, draugr,
+  giants, wolves, rieklings, spiders, chaurus, trolls…) can pin a victim in a paired struggle QTE
+  and, on a win, claim them in a scene:
+  - Proximity attempts on **downed** victims every few seconds, plus optional **on-hit mid-combat
+    grapples** (own toggle + chance slider) for followers and the player
+  - **Struggle vs escalate split** — "Escalate to Sex After Win" OFF gives pure predator struggles:
+    a beast mauling its prey, no scene ever starts, no adult creature animation packs needed
+  - **Group scenes** — up to two same-type companions join (3v1 / 2v1), automatically falling back
+    3 → 2 → pair until your animation library actually has a scene for that size and creature type
+  - Optional **LLM gate** — SkyrimNet's model answers a strict yes/no ("should this escalation
+    happen right now?") before any downed-victim claim; pacing control by the narrator itself
+- **Downed = vanilla mortality + executions** — no artificial invulnerability while defeated: any
+  weapon-delivered hit (melee, **fists**, **arrows/bolts** — never spells or stray magic) on a
+  defeated actor is a killing blow. Essential/protected actors survive it; victims mid-struggle or
+  mid-scene are untouchable, and every exit carries a short post-escape mercy window so nobody gets
+  spawn-killed the frame protection drops
 - **Facial expressions** — happy / angry / afraid / sad / pained / surprised / confused
   - LLM-triggerable *and* automatic in-scene (fear in a struggle, pain on a choke / bleedout, sadness while crying)
   - Adjustable intensity
 - **Reactions** — animated tears, face / tear overlays that survive sex scenes, cover-self after a spank
 - **PrismaUI menus** for choosing interactions and setting up encounters
+- **Paired-animation physics fix** — both actors' Havok bumper capsules shrink to 5% of vanilla for
+  the duration of any paired animation (exact radii cached per actor and restored afterward, never a
+  shrink-of-a-shrink), so partners stop physically shoving each other out of alignment mid-pose
 
 ## Compatibility
 
@@ -69,10 +88,11 @@ runtimes. (VR additionally needs SkyrimNet and PrismaUI themselves to work in VR
 
 **Optional (degrades gracefully if absent)**
 - [Flash Games – Struggling QTE](https://www.nexusmods.com/skyrimspecialedition/mods/121909), [Dynamic Feminine Female Modesty Animations OAR](https://www.nexusmods.com/skyrimspecialedition/mods/104374)
-- [OCreatures Revived](https://www.loverslab.com/files/file/49059-ocreatures-revived/) — *needed for the creature escalation feature to actually produce a scene.* This mod doesn't call OCreatures directly; it hands a downed victim and a nearby beast off to your sex framework (SexLab/OStim) the same way any human escalation does. OCreatures is what makes non-vanilla creature races compatible with that framework in the first place — without it, creature escalation can still trigger narratively but the resulting scene may not work correctly.
+- [OCreatures Revived](https://www.loverslab.com/files/file/49059-ocreatures-revived/) — *needed for the creature escalation feature to actually produce a scene.* This mod doesn't call OCreatures directly; it hands a downed victim and a nearby beast off to your sex framework (SexLab/OStim) the same way any human escalation does. OCreatures is what makes non-vanilla creature races compatible with that framework in the first place — without it, creature escalation can still trigger narratively but the resulting scene may not work correctly. **You also need creature animation packs** (e.g. Billyy's, Anub's) actually covering each creature type: scenes are only started when a matching animation exists (group sizes fall back 3 → 2 → pair automatically; a type with no pair animation at all gets a clean refusal + a 5-minute backoff instead of a retry loop). The struggle/pin phase itself uses the bundled Baka Motion Data Pack and needs nothing extra.
 - **SeverActions – SkyrimNet Action Pack** — *recommended for the downed/capture flow.* Not called by this mod and not a hard requirement, but its actions are automatically available to the LLM when installed, giving captors richer consequences on a beaten target: cease fighting, adjust relationship, take prisoner / arrest, add to debt or demand a ransom, transfer to a retainer, dismiss/recruit. The Baka downed cues invite these outcomes, so they "just work" alongside Baka's own choke/pin/grope/escalate actions.
-- **Simple Slavery Plus Plus (SS++)** — *required for the `SellToSlavery` action to actually do anything.* This mod hands off to SS++'s own "SSLV Entry" mod event; without it installed, `SellToSlavery` just narrates the capture and nothing mechanical happens (no crash, no error, just no auction).
-- **SkyrimNet Acheron Integration** — a separate, optional companion addon that manages the ongoing "downed" hold/recovery state after a combat defeat (as opposed to Baka's own QTE-based defeats, which this mod always handles by itself). **Baka Integration works fully standalone without it.** When both are installed, they hand a downed victim back and forth and even coordinate on creature encounters — but neither one requires the other.
+- **Simple Slavery Plus Plus (SS++)** — *required for the `SellToSlavery` action to actually do anything.* This mod hands off to SS++'s own "SSLV Entry" mod event; without it installed, `SellToSlavery` just narrates the capture and nothing mechanical happens (no crash, no error, just no auction). Targets the defeated **player** only — the follower counterpart is the Follower Slavery Mod hand-off below, and the two are deliberately kept disjoint so the LLM can never confuse them.
+- **Follower Slavery Mod (FSM)** — *required for the `EnslaveFollower` action to do anything.* Lets NPCs drag the player's **downed follower** off into FSM's own enslavement questline (via its documented `fsm_enslavefollower` mod event, with the captor offered as master) — but only while the player is downed too or farther away than an MCM-configurable distance, so it can never happen under your nose. **OFF by default** (it permanently removes a follower from the party until freed through FSM); the action is removed from the LLM's menu entirely whenever FSM is absent, not yet initialized in its own MCM, or the toggle is off.
+- **SkyrimNet Acheron Integration** — a separate, optional companion addon ([GitHub](https://github.com/Around906/SkyrimNet-Acheron-Integration)) that manages the ongoing "downed" hold/recovery state after a combat defeat (as opposed to Baka's own QTE-based defeats, which this mod always handles by itself). **Baka Integration works fully standalone without it.** When both are installed they hand a downed victim back and forth seamlessly — including the "park" design, where a victim who loses a struggle rides Acheron's protected defeat state straight through scene prep and the scene itself, with no unprotected handoff windows for enemies to exploit — and they coordinate on creature encounters, the get-up key's charge bar, and recovery. Neither one requires the other.
 
 ## Installation
 
@@ -85,8 +105,17 @@ runtimes. (VR additionally needs SkyrimNet and PrismaUI themselves to work in VR
 
 MCM (and script properties) expose toggles:
 - Scene framework selector (Auto / SexLab / OStim)
+- **Creatures block** (all opt-in): master toggle, can-target-the-player, allow mid-combat,
+  escalate-on-hit (+ chance), **Escalate to Sex After Win** (OFF = struggle-only predator mode),
+  NPC success chance, struggle duration, **LLM Decides Escalations**
+- **Slavery pair**: *Sell to Slavery* (defeated player → Simple Slavery++) and *Follower
+  Enslavement* (downed follower → Follower Slavery Mod) with its player-distance slider — each
+  grayed out until its mod is detected, each removable from the LLM's menu independently
+- **Post-Escape Grace** — the untouchable mercy window after every struggle/scene exit
 - `bExpressionsEnabled` — facial-expression master switch
 - `fExpressionIntensity` (0.0–1.0) — how strong faces look
+- **Show Corner Notifications** / **Enable Debug Logging** — clean-HUD and clean-log switches for
+  normal play (keep logging ON when reporting issues)
 - spank cooldowns, male-target / player-target allowances, animated tears, etc.
 
 ## Notes & tips

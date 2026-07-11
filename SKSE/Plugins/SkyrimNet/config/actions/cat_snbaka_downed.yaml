@@ -7,7 +7,7 @@
 # MUST STAY enabled: true. Tried disabling this (both with and without actionType: category, matching
 # SeverActions' cat_companion.yaml) to stop the LLM from picking bare "Down" with a dead-end
 # {"intent": "..."} payload — confirmed via before/after log diffs that enabled: false, REGARDLESS of
-# actionType, strips every member action (Rape, HelpUp, Release, Harass, CapturedInspect, ChokeHelpless,
+# actionType, strips every member action (Escalate, HelpUp, Release, Harass, CapturedInspect, ChokeHelpless,
 # Capture, SellToSlavery) out of SkyrimNet's rendered "## Eligible Actions" menu entirely — the only
 # place these actions are ever offered to the LLM with correct call syntax. EligibilityChecker still
 # reports them individually eligible when disabled, but they never actually render, so the LLM can

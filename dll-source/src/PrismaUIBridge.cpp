@@ -6,7 +6,9 @@
 
 
 static constexpr const char* kMenuHTMLPath    = "SNBaka_Menu/index.html";
-static std::vector<RE::FormID> s_noCollisionActors;
+static constexpr const char* kHudHTMLPath     = "SNBaka_Hud/index.html";
+struct NoCollisionEntry { RE::FormID id; float radius; };
+static std::vector<NoCollisionEntry> s_noCollisionActors;
 static constexpr const char* kModEventName    = "SNBaka_MenuChoice";
 static constexpr float       kSexScanRadius   = 300.0f;  // Skyrim units (~5 m)
 static constexpr float       kInteractRadius  = 150.0f;  // fallback nearest-actor range when crosshair is empty (was 300 — grabbed distant NPCs)
@@ -46,6 +48,11 @@ static RE::Actor* GetCrosshairActor() noexcept {
 }
 
 // Fallback when the crosshair is empty: nearest living non-player actor within radius.
+// "Living" excludes truly-dead actors but NOT a bleeding-out/essential-down one -- Actor::IsDead()
+// alone returns true for both (a long-standing Skyrim quirk: bleedout sets the same life-state family
+// as true death), which was silently excluding a downed follower from this exact fallback -- precisely
+// the moment the crosshair struggles most (a prone/ragdolled actor is hard to precisely target), and
+// precisely the actor this mod most needs to reach (the whole point of the downed-menu feature).
 static RE::Actor* FindNearestLivingActor(float radius) noexcept {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* cell   = player ? player->GetParentCell() : nullptr;
@@ -56,7 +63,7 @@ static RE::Actor* FindNearestLivingActor(float radius) noexcept {
     cell->ForEachReferenceInRange(origin, radius,
         [&](RE::TESObjectREFR* refr) -> RE::BSContainer::ForEachResult {
             auto* a = skyrim_cast<RE::Actor*>(refr);
-            if (!a || a->IsPlayerRef() || a->IsDead())
+            if (!a || a->IsPlayerRef() || (a->IsDead() && !a->IsBleedingOut()))
                 return RE::BSContainer::ForEachResult::kContinue;
             const auto  p  = a->GetPosition();
             const float dx = p.x - origin.x, dy = p.y - origin.y, dz = p.z - origin.z;
@@ -67,72 +74,159 @@ static RE::Actor* FindNearestLivingActor(float radius) noexcept {
     return best;
 }
 
-// Plan A (the proven one): instead of poking havok ourselves — which we could never
-// verify against the Steam-DRM-encrypted SkyrimSE.exe — we flag the actor as a PLAYER
-// TEAMMATE.  The already-installed DisableFollowerCollision reads exactly this bit
-// (BOOL_BITS::kPlayerTeammate = 1<<26 = 0x4000000 at actor+0xE0, via IsPlayerTeammate())
-// every frame and disables that actor's collision with the player.  The user proved this
-// works by adding an NPC to the follower faction.  Restored when the scene ends.
+// Plan A (player-teammate flag) is abandoned — see git history. It only ever disabled
+// NPC<->player collision one-sidedly (via the third-party DisableFollowerCollision mod
+// reading the teammate bit), never NPC<->NPC, and dragged the NPC into follower AI
+// processing as a side effect. It was left as a pure no-op after that, meaning actual
+// actor-vs-actor push-apart during paired animations was never fixed.
+//
+// Plan B (this one): shrink the actor's own Havok "character bumper" capsule directly --
+// the hkpCapsuleShape (tagged with RE::MATERIAL_ID::kCharacterBumper) inside their character
+// controller's collision shape tree that's responsible for pushing other actors away when
+// they get close. This is the same primitive the (Papyrus-uncallable) mod
+// VariadicCollisionDynamics uses (github.com/legendman89/VariadicCollisionDynamics, source
+// read directly) -- only the shape-tree walk is reused here, not its convex-hull rebuild or
+// per-race preset/pose system, since we only need a temporary full shrink for the duration
+// of a paired animation, restored to the exact captured radius afterward. Works for the
+// player too (VCD shrinks the player's own capsule on every sneak toggle) -- both
+// participants of a pair get shrunk, unlike the old one-sided approach.
+
+static RE::hkpShape* GetControllerRootShape(RE::bhkCharacterController* a_controller) noexcept {
+    if (!a_controller) return nullptr;
+    if (auto* proxy = skyrim_cast<RE::bhkCharProxyController*>(a_controller)) {
+        auto* charProxy = proxy->GetCharacterProxy();
+        if (!charProxy || !charProxy->shapePhantom) return nullptr;
+        return const_cast<RE::hkpShape*>(charProxy->shapePhantom->collidable.shape);
+    }
+    if (auto* rigidCtrl = skyrim_cast<RE::bhkCharRigidBodyController*>(a_controller)) {
+        auto* body = rigidCtrl->GetRigidBody();
+        if (!body || !body->GetCollidable()) return nullptr;
+        return const_cast<RE::hkpShape*>(body->GetCollidable()->GetShape());
+    }
+    return nullptr;
+}
+
+static bool IsBumperMaterial(const RE::hkpShape* a_shape, RE::hkpShapeKey a_key) noexcept {
+    if (!a_shape || !a_shape->userData) return false;
+    if (a_shape->userData->materialID == RE::MATERIAL_ID::kCharacterBumper) return true;
+    if (a_key != RE::HK_INVALID_SHAPE_KEY) {
+        return a_shape->userData->GetMaterialID(a_key) == RE::MATERIAL_ID::kCharacterBumper;
+    }
+    return false;
+}
+
+// Recursively walks list-shape / generic-container children looking for the capsule tagged
+// as the character bumper. Mirrors VCD's own walk (races/rigs vary in shape-tree layout, so
+// this stays defensive rather than assuming a fixed child index).
+static RE::hkpCapsuleShape* FindBumperCapsule(RE::hkpShape* a_shape, RE::hkpShapeKey a_key = RE::HK_INVALID_SHAPE_KEY) noexcept {
+    if (!a_shape) return nullptr;
+    if (a_shape->type == RE::hkpShapeType::kCapsule && IsBumperMaterial(a_shape, a_key)) {
+        return skyrim_cast<RE::hkpCapsuleShape*>(a_shape);
+    }
+    if (a_shape->type == RE::hkpShapeType::kList) {
+        auto* list = skyrim_cast<RE::hkpListShape*>(a_shape);
+        if (!list) return nullptr;
+        for (auto& child : list->childInfo) {
+            auto* childShape = const_cast<RE::hkpShape*>(child.shape);
+            if (childShape && childShape->type == RE::hkpShapeType::kCapsule &&
+                IsBumperMaterial(childShape, RE::HK_INVALID_SHAPE_KEY)) {
+                return skyrim_cast<RE::hkpCapsuleShape*>(childShape);
+            }
+            if (auto* found = FindBumperCapsule(childShape)) return found;
+        }
+        return nullptr;
+    }
+    const auto* container = a_shape->GetContainer();
+    if (!container) return nullptr;
+    for (auto key = container->GetFirstKey(); key != RE::HK_INVALID_SHAPE_KEY; key = container->GetNextKey(key)) {
+        RE::hkpShapeBuffer buffer{};
+        auto* childShape = const_cast<RE::hkpShape*>(container->GetChildShape(key, buffer));
+        if (childShape && childShape->type == RE::hkpShapeType::kCapsule && IsBumperMaterial(a_shape, key)) {
+            return skyrim_cast<RE::hkpCapsuleShape*>(childShape);
+        }
+        if (auto* found = FindBumperCapsule(childShape, key)) return found;
+    }
+    return nullptr;
+}
+
+static RE::hkpCapsuleShape* ResolveBumperCapsule(RE::Actor* a_actor) noexcept {
+    if (!a_actor) return nullptr;
+    auto* controller = a_actor->GetCharController();
+    if (!controller) return nullptr;
+    return FindBumperCapsule(GetControllerRootShape(controller));
+}
+
+// Fraction of the vanilla bumper radius left in place while "disabled" -- thin enough that
+// two paired actors' capsules stop overlapping/pushing, but non-zero (a literal 0 radius is
+// a degenerate Havok capsule). 0.15 still let paired actors nudge each other slightly
+// (confirmed request: "we should shrink it further").
+static constexpr float kBumperShrinkFactor = 0.05f;
+
+// Shrinks (disable=true) or restores (disable=false) one actor's bumper capsule. Always
+// caches the exact pre-shrink radius under the actor's FormID and restores that exact value
+// -- never a relative shrink-of-a-shrink -- so repeat disable calls from overlapping call
+// sites (confirmed to happen: e.g. PlayPairedSequence and _SetupPair can both fire for the
+// same pair) can't compound, and repeat enable calls can't over-restore.
 static void SetActorNoCharCollision(RE::Actor* actor, bool disable, bool a_log = true) noexcept {
     if (!actor) return;
-    // COLLISION ABANDONED: the player-teammate flag is intentionally NOT set.  It was the
-    // only way to get DFC to turn off NPC↔player collision, but flagging NPCs as teammates
-    // drags them into the game's follower/teammate AI processing, which accumulates and
-    // slows the game (and any scene that doesn't clean up leaves a stuck teammate).  Not
-    // worth the cost — scenes rely on the vehicle pin + SetDontMove + DoNothing hold instead.
-    // (Re-enable the two lines below only if you ever want DFC collision-off back.)
-    // if (disable) actor->GetActorRuntimeData().boolBits.set(RE::Actor::BOOL_BITS::kPlayerTeammate);
-    // else         actor->GetActorRuntimeData().boolBits.reset(RE::Actor::BOOL_BITS::kPlayerTeammate);
-    if (a_log) {
-        SKSE::log::info("  collision no-op for '{}' (disable={}, teammate flag abandoned)",
-            actor->GetDisplayFullName(), disable);
+    const auto id = actor->GetFormID();
+    auto it = std::find_if(s_noCollisionActors.begin(), s_noCollisionActors.end(),
+        [id](const NoCollisionEntry& e) { return e.id == id; });
+
+    auto* cell  = actor->GetParentCell();
+    auto* world = cell ? cell->GetbhkWorld() : nullptr;
+
+    if (disable) {
+        if (it != s_noCollisionActors.end()) return;  // already shrunk, no-op
+        auto* capsule = ResolveBumperCapsule(actor);
+        if (!capsule || !world) {
+            if (a_log) {
+                SKSE::log::warn("SetActorCollision: bumper capsule unavailable for '{}'", actor->GetDisplayFullName());
+            }
+            return;
+        }
+        const float original = capsule->radius;
+        {
+            RE::BSWriteLockGuard lock(world->worldLock);
+            capsule->radius = original * kBumperShrinkFactor;
+        }
+        s_noCollisionActors.push_back({ id, original });
+        if (a_log) {
+            SKSE::log::info("SetActorCollision: '{}' bumper radius {} -> {} (tracked={})",
+                actor->GetDisplayFullName(), original, capsule->radius, s_noCollisionActors.size());
+        }
+    } else {
+        if (it == s_noCollisionActors.end()) return;  // wasn't shrunk, nothing to restore
+        auto* capsule = ResolveBumperCapsule(actor);
+        if (capsule && world) {
+            RE::BSWriteLockGuard lock(world->worldLock);
+            capsule->radius = it->radius;
+        }
+        if (a_log) {
+            SKSE::log::info("SetActorCollision: '{}' bumper radius restored (tracked={})",
+                actor->GetDisplayFullName(), s_noCollisionActors.size() - 1);
+        }
+        s_noCollisionActors.erase(it);
     }
 }
 
-// The teammate flag is a persistent actor bit — set it once, DFC reads it every frame,
-// and the Papyrus DoNothing package override (added at scene start) keeps the follower
-// AI it triggers from breaking the held animation.  No per-frame C++ hook needed.
-
-// Restore collision on all actors we previously modified.
+// Restore original bumper-capsule radius on all actors we previously shrank.
 void PrismaUIBridge::RestoreTrackedCollision() noexcept {
-    for (auto id : s_noCollisionActors) {
-        auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
+    // Snapshot first: SetActorNoCharCollision erases from s_noCollisionActors as it restores,
+    // so iterating the live vector directly would skip every other entry.
+    auto pending = s_noCollisionActors;
+    for (auto& entry : pending) {
+        auto* actor = RE::TESForm::LookupByID<RE::Actor>(entry.id);
         SetActorNoCharCollision(actor, false);
     }
     s_noCollisionActors.clear();
     SKSE::log::info("RestoreTrackedCollision: done.");
 }
 
-// Per-actor collision toggle, exposed to Papyrus.  Called for both participants
-// at animation start (disable) and from _CleanupPair (restore).  Tracks FormIDs
-// so RestoreTrackedCollision() can clear anything left dangling after a load.
+// Per-actor collision toggle, exposed to Papyrus. Called for both participants
+// at animation start (disable) and from _CleanupPair (restore).
 void PrismaUIBridge::SetActorCollision(RE::Actor* actor, bool disable) noexcept {
-    if (!actor) return;
-    // Never flag the PLAYER as their own teammate.  DFC disables the NPC's collision
-    // against the player, so flagging just the NPC is enough.
-    if (actor->IsPlayerRef()) {
-        SKSE::log::info("SetActorCollision: skipping player.");
-        return;
-    }
-    const auto id = actor->GetFormID();
-    if (disable) {
-        const bool alreadyTracked =
-            std::find(s_noCollisionActors.begin(), s_noCollisionActors.end(), id) != s_noCollisionActors.end();
-        SetActorNoCharCollision(actor, true, /*a_log=*/!alreadyTracked);
-        if (!alreadyTracked) {
-            s_noCollisionActors.push_back(id);
-            SKSE::log::info("SetActorCollision: '{}' disable=true (tracked={})",
-                actor->GetDisplayFullName(), s_noCollisionActors.size());
-        }
-        return;
-    } else {
-        SetActorNoCharCollision(actor, false);
-        s_noCollisionActors.erase(
-            std::remove(s_noCollisionActors.begin(), s_noCollisionActors.end(), id),
-            s_noCollisionActors.end());
-    }
-    SKSE::log::info("SetActorCollision: '{}' disable={} (tracked={})",
-        actor->GetDisplayFullName(), disable, s_noCollisionActors.size());
+    SetActorNoCharCollision(actor, disable);
 }
 
 bool PrismaUIBridge::IsAlchemyOrEnchantingFurniture(RE::TESObjectREFR* furniture) noexcept {
@@ -204,6 +298,42 @@ void PrismaUIBridge::CreateMenuView() noexcept {
 
 bool PrismaUIBridge::IsAvailable() noexcept {
     return s_prisma && s_prisma->IsValid(s_view);
+}
+
+void PrismaUIBridge::CreateHudView() noexcept {
+    if (!s_prisma) return;
+    if (s_hudView && s_prisma->IsValid(s_hudView)) return; // already valid
+    s_hudView = s_prisma->CreateView(kHudHTMLPath);
+    if (!s_prisma->IsValid(s_hudView)) {
+        SKSE::log::error("Failed to create SNBaka_Hud view at '{}'.", kHudHTMLPath);
+        return;
+    }
+    // Always "shown" -- unlike s_view's modal wizards, this overlay is never paused/focused. The HTML
+    // itself starts invisible (opacity 0) and only fades in while charging; Show() just means it's
+    // present in the render list, matching Ostim_interactions' OII_Hud pattern.
+    s_prisma->Show(s_hudView);
+    SKSE::log::info("SNBaka_Hud view created.");
+}
+
+void PrismaUIBridge::SetGetUpCharge(float pct) noexcept {
+    if (!s_prisma || !s_prisma->IsValid(s_hudView)) {
+        SKSE::log::warn("SetGetUpCharge: HUD view unavailable, attempting recovery (pct={}).", pct);
+        CreateHudView();
+        if (!s_prisma || !s_prisma->IsValid(s_hudView)) {
+            SKSE::log::error("SetGetUpCharge: recovery failed, dropping call.");
+            return;
+        }
+    }
+    // Logged once per charge (on the first tick and on hide), not every ~50ms tick in between --
+    // that would spam the log without adding anything a single "did this fire at all" line doesn't.
+    static bool s_wasCharging = false;
+    const bool isCharging = pct >= 0.0f;
+    if (isCharging != s_wasCharging) {
+        SKSE::log::info("SetGetUpCharge: {} (pct={}).", isCharging ? "charge started" : "charge ended/hidden", pct);
+        s_wasCharging = isCharging;
+    }
+    const auto script = std::format("window.snbakaSetGetUpCharge({})", pct);
+    s_prisma->Invoke(s_hudView, script.c_str());
 }
 
 bool PrismaUIBridge::IsMenuOpen() noexcept {
@@ -328,6 +458,35 @@ void PrismaUIBridge::ShowEncounterMenu(RE::Actor* aggressor, RE::Actor* victim) 
     s_prisma->Focus(s_view, /*pauseGame=*/true, /*disableFocusMenu=*/false);
 }
 
+void PrismaUIBridge::ShowDownedMenu(RE::Actor* caster, RE::Actor* victim) noexcept {
+    if (!IsAvailable()) {
+        CreateMenuView();
+        if (!IsAvailable()) {
+            SKSE::log::error("ShowDownedMenu: view unavailable.");
+            return;
+        }
+    }
+    if (!caster || !victim) {
+        SKSE::log::error("ShowDownedMenu: null caster/victim.");
+        return;
+    }
+
+    s_downedCaster = caster->GetFormID();
+    s_downedVictim = victim->GetFormID();
+    SKSE::log::info("ShowDownedMenu: caster='{}' (0x{:08X}) victim='{}' (0x{:08X})",
+        caster->GetDisplayFullName(), s_downedCaster,
+        victim->GetDisplayFullName(), s_downedVictim);
+
+    std::string safe = victim->GetDisplayFullName();
+    for (auto& c : safe) if (c == '\'') c = '\x60';
+    const auto script = std::format("window.snbaka_open_downed('{}')", safe);
+
+    s_mode = MenuMode::Downed;
+    s_prisma->Show(s_view);
+    s_prisma->Invoke(s_view, script.c_str());
+    s_prisma->Focus(s_view, /*pauseGame=*/true, /*disableFocusMenu=*/false);
+}
+
 void PrismaUIBridge::ShowSexSpankMenu(const std::string& json) noexcept {
     if (!IsAvailable()) {
         CreateMenuView();
@@ -421,7 +580,8 @@ void PrismaUIBridge::OnJSChoice(const char* value) noexcept {
     const MenuMode mode = s_mode.exchange(MenuMode::None);
     const int      choice    = value ? std::atoi(value) : -1;
     const float    numArg    = static_cast<float>(choice);
-    const char*    strArg    = (mode == MenuMode::SexSpank) ? "sexspank" : "interact";
+    const char*    strArg    = (mode == MenuMode::SexSpank) ? "sexspank" :
+                                (mode == MenuMode::Downed)   ? "downed"   : "interact";
 
     // Snapshot C++ actor state so the lambda doesn't race with a future ShowSexSpankMenu.
     const bool                      useCpp  = s_usingCppSexActors;
@@ -431,12 +591,14 @@ void PrismaUIBridge::OnJSChoice(const char* value) noexcept {
     const RE::FormID                iTarget = s_interactTarget;
     const RE::FormID                eAgg    = s_encAggressor;
     const RE::FormID                eVic    = s_encVictim;
+    const RE::FormID                dCaster = s_downedCaster;
+    const RE::FormID                dVictim = s_downedVictim;
     const std::string               spec    = value ? value : "";   // encounter: "role;intensity;flavor;type" or "cancel"
 
     SKSE::log::info("OnJSChoice: mode={} choice={} useCpp={} spec='{}'",
         strArg, choice, useCpp, spec);
 
-    SKSE::GetTaskInterface()->AddTask([numArg, strArg, mode, choice, useCpp, actIds, actCnt, iCaster, iTarget, eAgg, eVic, spec]() {
+    SKSE::GetTaskInterface()->AddTask([numArg, strArg, mode, choice, useCpp, actIds, actCnt, iCaster, iTarget, eAgg, eVic, dCaster, dVictim, spec]() {
         auto* vm      = RE::BSScript::Internal::VirtualMachine::GetSingleton();
         auto* handler = RE::TESDataHandler::GetSingleton();
         if (!vm || !handler) {
@@ -531,6 +693,31 @@ void PrismaUIBridge::OnJSChoice(const char* value) noexcept {
                 args, cb);
             delete args;
             SKSE::log::info("Task: _DispatchInteractActionWithActors dispatched.");
+            return;
+        }
+
+        // ── Downed: dispatch with the actors captured at menu-open ──────────────
+        if (mode == MenuMode::Downed) {
+            auto* cst = RE::TESForm::LookupByID<RE::Actor>(dCaster);
+            auto* vic = RE::TESForm::LookupByID<RE::Actor>(dVictim);
+            SKSE::log::info("Task: downed dispatch — caster='{}' (0x{:08X}) victim='{}' (0x{:08X}) choice={}",
+                cst ? cst->GetDisplayFullName() : "(null)", dCaster,
+                vic ? vic->GetDisplayFullName() : "(null)", dVictim, choice);
+            if (!cst || !vic) {
+                SKSE::log::error("Task: downed — actor lookup failed.");
+                return;
+            }
+            auto* args = RE::MakeFunctionArguments(
+                std::int32_t{choice},
+                static_cast<RE::Actor*>(cst),
+                static_cast<RE::Actor*>(vic));
+            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> cb;
+            vm->DispatchMethodCall(handle,
+                RE::BSFixedString("SkyrimNet_BakaIntegration"),
+                RE::BSFixedString("_DispatchDownedAction"),
+                args, cb);
+            delete args;
+            SKSE::log::info("Task: _DispatchDownedAction dispatched.");
             return;
         }
 

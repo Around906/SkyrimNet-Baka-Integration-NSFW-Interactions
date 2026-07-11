@@ -106,6 +106,12 @@ Float Property fResistDifficulty    = 70.0 Auto
 ; NPC-vs-NPC struggle: the victim's % chance to break free (no QTE — it's auto-rolled).
 ; Lower = the attacker wins more often (which leads into the overpower/escalation content).
 Float Property fNPCEscapeChance     = 35.0 Auto
+; The MERCY window: a few extra seconds of untouchability (ghost held) whenever a victim exits the
+; protected interaction pipeline -- a won struggle (player QTE, NPC escape roll, the bridge's get-up
+; key) or the end of a sex scene -- so nobody gets spawn-killed the exact frame the protection drops.
+; Confirmed from testing: the ghost used to drop the instant cleanup ran, and a third falmer attacked
+; the player literally that moment. 0 disables.
+Float Property fEscapeGraceDuration = 2.0 Auto
 ; NPC-vs-NPC forced anims: how long each stage is held before advancing. The fight plays its
 ; shared middle stages at this rate, then the deciding stage (attacker-victor or break-free).
 Float Property fNPCStageTime        = 5.0 Auto
@@ -123,11 +129,66 @@ Int Property iSexBackend = 0 Auto
 ; ── Creature escalation (OPT-IN bestiality content — every toggle defaults OFF/restrictive) ──
 Bool Property bCreatureEscalation  = False Auto  ; master switch: creatures may escalate on humans
 Bool Property bCreatureOnPlayer    = False Auto  ; allow creatures to escalate on the PLAYER
+; Struggle vs escalate split (explicit spec): the STRUGGLE (pin/QTE — "a wolf mauling a person")
+; can be enabled on its own; the sex SCENE that follows a creature win is the separate, kinkier
+; step. OFF = a creature win just leaves the victim downed, no scene ever starts.
+Bool Property bCreatureSceneAllowed = True Auto
+; Ask SkyrimNet's LLM a one-word YES/NO before a downed-victim creature escalation commits (the
+; proximity pipeline only — on-hit mid-combat grapples stay instant, an LLM round-trip is too slow
+; for a live melee exchange). Fail-open on any LLM error. See snbaka_escalation_gate.prompt.
+Bool Property bLLMGateEscalation   = False Auto
+; Corner-message master switch: all player-facing Debug.Notification messages route through _Notify,
+; so turning this off gives a clean HUD. Papyrus log traces are unaffected.
+Bool Property bShowNotifications   = True Auto
 Bool Property bCreatureCombatAllowed = True Auto ; True = also mid-combat; False = only once the victim is downed
+; A creature's own melee hit on a follower can attempt escalation directly, without waiting for the
+; follower to go down first (see HitEventSink.cpp / OnCreatureHitFollower below). AND-gated with
+; bCreatureCombatAllowed above (both must be on) plus the existing master switch/sex filter that
+; _DoCreatureEscalation already enforces -- turn any one of them off and this simply never fires.
+Bool Property bCreatureEscalateFollowersOnHit = False Auto
+; A hit landing doesn't mean the creature actually TRIES -- confirmed feedback from testing: with no
+; gate here, almost every melee hit guaranteed a struggle attempt, which gets old fast. Rolled once per
+; hit (after the 3s per-victim throttle already in OnCreatureHitFollower), independent of the outcome
+; roll below (iCreatureSuccessPct decides who WINS an attempt that's already happening; this decides
+; whether the creature even bothers this time).
+Int  Property iCreatureHitEngageChance = 25 Auto
+; ===== Humanoid mid-combat escalation (on-hit) =====
+; Same idea as the creature pair above, for HUMANOID aggressors: an enemy human who just landed a melee
+; hit on a follower/the player can attempt a Struggle right there mid-combat. Routed through the same
+; native hit event and the same per-victim throttle as the creature path; dispatches to the ordinary
+; Struggle action (QTE for the player, timed roll for NPCs), so every existing Struggle gate (master
+; switch, sex filter, player-target permission, locks) still applies on top of these two.
+Bool Property bHumanEscalateOnHit = False Auto  ; opt-in, default OFF like the creature version
+Int  Property iHumanHitEngageChance = 25 Auto   ; chance per (throttled) hit that the humanoid bothers
 Int  Property iCreatureVictimSex   = 0     Auto  ; allowed victim sex (same scheme as iTargetSex): 0=both, 1=female, 2=male
 Bool Property bSellToSlavery       = True  Auto  ; allow the Sell-to-Slavery action (no-ops unless Simple Slavery Plus Plus is installed)
+; NPCs may enslave a DOWNED FOLLOWER via Follower Slavery Mod — deliberately separate from
+; bSellToSlavery (that one auctions the PLAYER via SS++); the two actions have disjoint targets so
+; the LLM can't confuse them. Default OFF: it permanently removes a follower from the party.
+Bool  Property bFollowerSlavery       = False  Auto
+Float Property fSlaveryPlayerDistance = 1500.0 Auto  ; player must be at least this far (or downed too) for EnslaveFollower to fire
 Int  Property iCreatureBackend     = 0     Auto  ; creature sex backend: 0=auto, 1=SexLab, 2=OStim
-Int  Property iCreatureSuccessPct  = 50    Auto  ; NPC-victim success chance while not yet downed (downed = always)
+Int  Property iCreatureSuccessPct  = 50    Auto  ; NPC-victim escape chance, both while not yet downed AND already downed
+; How long a not-yet-downed NPC struggle holds the shared pose before rolling the outcome -- confirmed
+; feedback from testing: the old 2-stage x1.5s (3s total) read as far too quick to be a real struggle.
+; Not used for the player (real interactive QTE) or an already-downed victim (a quick roll, no drawn-out
+; struggle to hold a pose through).
+Float Property fCreatureStruggleDuration = 12.0 Auto
+; A struggle LOSS (victim defeated, by a creature or a human) starts this grace window on the victim:
+; no new passive creature attempt (on-hit roll or the downed-victim scan) will pick them again until it
+; expires, UNLESS they end up back in real combat first (a live combat target ends the grace early) --
+; confirmed feedback: back-to-back struggles on the same victim the instant one ends "grows old fast."
+Float Property fPostDefeatGraceDuration = 100.0 Auto
+; Nobody gets pulled into a struggle for this many seconds after a genuinely fresh down (see
+; SNAcheron.FreshDownRT) -- lets the bleedout/collapse animation actually settle first. Confirmed real
+; bug from testing: engaging too early can break the down animation and leave the victim stuck
+; perpetually "downing" instead of settling into a normal held/bleedout state.
+Float Property fFreshDownGraceDuration = 3.0 Auto
+; Once a victim is confirmed down and the scene is actually about to start, look for up to this many
+; OTHER creatures of the SAME type nearby to join in (a 2v1/3v1 group scene) -- computed only at that
+; point, never earlier, so a struggle that fails or a combat-not-clear outcome never wastes the scan.
+; 1 = current single-creature behavior; 3 is the practical ceiling most animation packs support.
+Int Property iCreatureGroupMaxSize = 3 Auto
 ; ===== Spank system =====
 Bool  Property bPlayerCanBeSpanked     = True Auto
 Bool  Property bSpankFurnitureTriggers = True Auto
@@ -224,6 +285,29 @@ Bool _bStandBack            = False
 Bool _bResetDownWindow      = False
 ; True when player is A2 (victim) for the current QTE — determines how afNumArg maps to escape.
 Bool _bPlayerIsVictim       = False
+; --- LLM escalation gate (bLLMGateEscalation) transient state: one ask in flight at a time ---
+Bool  _bGatePending  = False
+Float _fGateSentRT   = 0.0
+Actor _gateCreature  = None
+Actor _gateVictim    = None
+
+; Corner-message wrapper — every player-facing Debug.Notification in this script routes through here
+; so the MCM "Show Notifications" toggle can silence the lot for a clean HUD. Traces are unaffected.
+Function _Notify(String msg)
+    If bShowNotifications
+        Debug.Notification(msg)
+    EndIf
+EndFunction
+
+; Trace wrapper — every Debug.Trace in this script routes through here, gated on the bDebugLog MCM
+; toggle. The string concatenation at each call site still runs (Papyrus evaluates arguments first),
+; but the synchronized log-file WRITE — the expensive part on a starved VM — is skipped when off.
+; Keep it ON while actively debugging/stabilizing; turn OFF for clean high-performance play.
+Function _Log(String msg)
+    If bDebugLog
+        Debug.Trace(msg)
+    EndIf
+EndFunction
 ; Set by DrugFood_Execute before calling _DefeatGroundWindow so _DoEscalation
 ; can trigger an unconscious-victim SexLab scene instead of a generic rape scene.
 ; Cleared by _DoEscalation after the scene is started.
@@ -279,10 +363,20 @@ Event OnPlayerLoadGame()
 EndEvent
 
 Function Setup()
+    ; Confirmed real bug from testing: THIS is the actual primary re-registration path (called from
+    ; SkyrimNet_BakaIntegration_MCM's OnGameReload on every single load -- see that script's own comment;
+    ; the OnUpdateGameTime heartbeat in this quest is only a secondary backup), yet it never refreshed
+    ; PlayerRef before calling _RegisterModEvents(), which only sets SNBaka.Present behind an "If
+    ; PlayerRef" guard. If PlayerRef was stale/None at this exact point, the flag silently never got set
+    ; -- Acheron's own creature-handoff check reads that flag and skips every roll forever, even though
+    ; Baka was actually alive and listening (its own SNBaka_TryCreatureOnDowned handler fired fine).
+    If !PlayerRef
+        PlayerRef = Game.GetPlayer()
+    EndIf
     UnregisterForAllModEvents()
     _RegisterDecorators()
     ; Acheron-downed handoff (creature pounce) + AEL/menu events. Re-asserted from OnUpdateGameTime too,
-    ; because Setup doesn't run on a normal reload (OnPlayerLoadGame doesn't fire on a Quest script).
+    ; as a backup in case this path is ever skipped.
     _RegisterModEvents()
     ; Re-read SNBaka_Offsets.ini so edits to the offsets file apply on game load (no restart needed).
     SNBakaUI.ReloadOffsets()
@@ -292,7 +386,10 @@ Function Setup()
     If !bSellToSlavery
         SkyrimNetApi.UnregisterAction("SellToSlavery")
     EndIf
-    Debug.Trace("[SNBaka] Setup: SexLab installed=" + SkyrimNet_BakaSL.Installed())
+    If !bFollowerSlavery || !IsFollowerSlaveryInstalled()
+        SkyrimNetApi.UnregisterAction("EnslaveFollower")
+    EndIf
+    _Log("[SNBaka] Setup: SexLab installed=" + SkyrimNet_BakaSL.Installed())
     ; Spank system
     SpankTatFadeRate = SpankHealFactor as Float
     If SpankTatFadeRate < 0.1
@@ -337,7 +434,7 @@ Function Setup()
     If _m
         InteractMenuAggSexual = _m
     EndIf
-    Debug.Trace("[SNBaka] Setup: InteractMenuMain=" + InteractMenuMain + " InteractPower=" + InteractPower)
+    _Log("[SNBaka] Setup: InteractMenuMain=" + InteractMenuMain + " InteractPower=" + InteractPower)
 
     ; Emotional Tears Effect SE — optional soft dependency, no master needed.
     ; Resolved at runtime; no-ops silently if EmoTears4NPCs.esp is not installed.
@@ -351,10 +448,10 @@ Function Setup()
         If !TearSpell
             TearSpell = Game.GetFormFromFile(0x000802, "EmoTears4NPCs.esp") as Spell
         EndIf
-        Debug.Trace("[SNBaka] Setup: TearSpell using=" + TearSpell)
+        _Log("[SNBaka] Setup: TearSpell using=" + TearSpell)
     Else
         TearSpell = None
-        Debug.Trace("[SNBaka] Setup: TearSpell cleared (disabled)")
+        _Log("[SNBaka] Setup: TearSpell cleared (disabled)")
     EndIf
 
     ; EscalatePower is no longer added to the player — Interact_ShowMenu handles escalation
@@ -363,12 +460,55 @@ Function Setup()
     If InteractPower && !PlayerRef.HasSpell(InteractPower)
         PlayerRef.AddSpell(InteractPower)
     EndIf
+
+    ; Sell-to-Slavery availability, resolved at every load (Setup runs per-load via the MCM's
+    ; OnGameReload): the YAML re-registers the action on load, so pull it back OUT of the LLM's menu
+    ; whenever it can't actually work -- Simple Slavery++ missing, or the user's MCM toggle off (the
+    ; toggle's own handler already does this live; this covers the re-registration on the NEXT load).
+    ; Execute() carries the same plugin check as a belt-and-suspenders for direct calls.
+    If !IsSimpleSlaveryInstalled()
+        SkyrimNetApi.UnregisterAction("SellToSlavery")
+        _Log("[SNBaka] Setup: SimpleSlavery.esp not installed — SellToSlavery action unregistered")
+    ElseIf !bSellToSlavery
+        SkyrimNetApi.UnregisterAction("SellToSlavery")
+        _Log("[SNBaka] Setup: bSellToSlavery is OFF — SellToSlavery action unregistered")
+    EndIf
+    ; Same gate for the FOLLOWER slavery action (Follower Slavery Mod) — unregistered when the mod
+    ; isn't ready or the toggle is off, so the LLM never even sees it. Keeping the two slavery
+    ; actions' availability independent is what stops wrong-target calls breaking roleplay.
+    If !IsFollowerSlaveryInstalled()
+        SkyrimNetApi.UnregisterAction("EnslaveFollower")
+        _Log("[SNBaka] Setup: Follower Slavery Mod not installed/initialized — EnslaveFollower action unregistered")
+    ElseIf !bFollowerSlavery
+        SkyrimNetApi.UnregisterAction("EnslaveFollower")
+        _Log("[SNBaka] Setup: bFollowerSlavery is OFF — EnslaveFollower action unregistered")
+    EndIf
+EndFunction
+
+; Plugin-presence probe for Simple Slavery Plus Plus -- GetFormFromFile is the only detection primitive
+; this compile environment's Game.psc has (no SKSE GetModByName here), and it's the same pattern this
+; file already uses for EmoTears4NPCs. 0x00492E = SS++'s own main QUST record, read directly from the
+; plugin binary (not guessed). Returns None (with a harmless engine log line) when the esp is absent.
+; Shared by Setup(), SellToSlavery_Execute, and the MCM (via the Main property).
+Bool Function IsSimpleSlaveryInstalled()
+    Return Game.GetFormFromFile(0x00492E, "SimpleSlavery.esp") != None
+EndFunction
+
+; Follower Slavery Mod readiness probe — FSM's own documented gate: this global StorageUtil flag is
+; set only once the player has opened FSM's MCM and clicked Install (before that its quests aren't
+; running and its enslave queue isn't listening). Shared by Setup(), EnslaveFollower_Execute and the MCM.
+Bool Function IsFollowerSlaveryInstalled()
+    Return StorageUtil.GetIntValue(None, "fsm_bIsMCMInstalled", 0) == 1
 EndFunction
 
 ; ============================================================
 ; Guards
 ; ============================================================
-Bool Function IsEligible(Actor akA1, Actor akA2)
+; abAllowMidCombat: relaxes ONLY the attacker-in-combat gate below -- used by the on-hit humanoid
+; escalation path (see Struggle_Execute's abFromHit), where the attacker being in combat is the whole
+; premise. Every other gate (enabled, dead, downed initiator, creatures, distance, player-target
+; permission, sex filter) still applies unconditionally.
+Bool Function IsEligible(Actor akA1, Actor akA2, Bool abAllowMidCombat = False)
     If !bEnabled || !akA1 || !akA2
         Return False
     EndIf
@@ -380,10 +520,21 @@ Bool Function IsEligible(Actor akA1, Actor akA2)
         Return False
     EndIf
     ; Creatures (Draugr, Falmer, Giant, wolves, etc.) get ONLY CreatureEscalate — never the human action
-    ; set (Struggle, ChokeHug, Rape, HelpUp, etc.), which plays human Babo animations and narrates them
+    ; set (Struggle, ChokeHug, Escalate, HelpUp, etc.), which plays human Babo animations and narrates them
     ; as a person. CreatureEscalate_Execute has its own separate gate and never calls IsEligible, so this
-    ; doesn't affect it.
-    If _IsCreatureActor(akA1) || _IsCreatureActor(akA2)
+    ; doesn't affect it. BOTH tests are required: _IsCreatureActor alone let falmers/giants/draugr
+    ; through (Bethesda tags those races ActorTypeNPC, the same keyword humans carry — confirmed
+    ; report: falmers and giants picking Inspect and other humanoid animations their skeletons can't
+    ; play). _CreatureAnimKey matches by actual race and isn't fooled by the keyword.
+    If _IsCreatureActor(akA1) || _IsCreatureActor(akA2) || _CreatureAnimKey(akA1) != "" || _CreatureAnimKey(akA2) != ""
+        _Log("[SNBaka] IsEligible: blocked — creature-skeleton actor in a humanoid action (" + akA1.GetDisplayName() + " -> " + akA2.GetDisplayName() + ")")
+        Return False
+    EndIf
+    ; An actor mid SEX SCENE (OStim/SexLab — ours OR another mod's; SNBaka.Locked only covers ours)
+    ; is never a valid paired-animation participant — yanking them out of a running thread breaks
+    ; both systems (explicit spec).
+    If IsInSexAnimation(akA1) || IsInSexAnimation(akA2)
+        _Log("[SNBaka] IsEligible: blocked — an actor is mid sex scene (" + akA1.GetDisplayName() + " -> " + akA2.GetDisplayName() + ")")
         Return False
     EndIf
     ; Player-involved uses the crosshair-range gate; NPC-vs-NPC gets the larger reach.
@@ -392,14 +543,14 @@ Bool Function IsEligible(Actor akA1, Actor akA2)
         maxDist = fNPCInteractionDistance
     EndIf
     If maxDist > 0.0 && akA1.GetDistance(akA2) > maxDist
-        Debug.Trace("[SNBaka] IsEligible: blocked — distance " + akA1.GetDistance(akA2) + " > " + maxDist)
+        _Log("[SNBaka] IsEligible: blocked — distance " + akA1.GetDistance(akA2) + " > " + maxDist)
         Return False
     EndIf
     ; Attacker-in-combat normally blocks an action — EXCEPT against a downed/bleeding-out victim. That
     ; is the defeat case: the fight may still be live around them, but the target is already beaten and
     ; helpless, so choke/pin/grope/escalate/etc. are valid. LockBoth then Calms the attacker out of
     ; combat so the held anim plays, and _ShouldAbort re-breaks it only if the attacker is actually hit.
-    If akA1.IsInCombat() && !_IsDownedAny(akA2)
+    If akA1.IsInCombat() && !_IsDownedAny(akA2) && !abAllowMidCombat
         Return False
     EndIf
     ; "Player Can Be Target" gates only the player being the VICTIM (akA2) — NOT the player
@@ -408,7 +559,10 @@ Bool Function IsEligible(Actor akA1, Actor akA2)
     If !bPlayerCanBeTarget && akA2 == PlayerRef
         Return False
     EndIf
-    If !_TargetSexAllowed(akA2)
+    ; Content-preference filter (what the LLM/an NPC should be allowed to pick), not a technical
+    ; constraint -- only gates a non-player initiator, same as bNPCCanEscalate/_DoEscalation. The
+    ; player targeting whoever they want, via any action, is their own deliberate choice.
+    If akA1 != PlayerRef && !_TargetSexAllowed(akA2)
         Return False
     EndIf
     If IsActorLocked(akA1) || IsActorLocked(akA2)
@@ -446,9 +600,9 @@ Bool Function HasFemaleBody(Actor akActor)
 EndFunction
 
 ; iTargetSex gate, shared by IsEligible (the ~24 "initiate an interaction" actions) AND Escalate_Execute
-; (Rape) directly — Rape doesn't call IsEligible (it acts on an already-downed victim, not a fresh
+; directly — Escalate doesn't call IsEligible (it acts on an already-downed victim, not a fresh
 ; interaction, so the distance/combat/cooldown checks don't apply), so without this call it was NOT
-; sex-gated at all: iTargetSex had zero effect on who could be raped, regardless of the setting.
+; sex-gated at all: iTargetSex had zero effect on who Escalate could target, regardless of the setting.
 ; HelpUp/Release deliberately do NOT call this — recovering or releasing a downed victim should never be
 ; blocked by target sex.
 Bool Function _TargetSexAllowed(Actor akTarget)
@@ -469,6 +623,15 @@ Keyword _kwActorTypeNPC
 Bool Function _IsCreatureActor(Actor ak)
     If !ak
         Return False
+    EndIf
+    ; Race-name match first — Falmer and Draugr are creature-behaving races that Bethesda still tags
+    ; with ActorTypeNPC (the same keyword every human uses), so the keyword check below alone
+    ; misclassifies them as humanoid. That let them slip through IsEligible into human-only actions
+    ; (Struggle, ChokeHug, Escalate, HelpUp, Capture — anything gated by IsEligible or this function
+    ; directly) using human Babo animations their skeleton can't actually play. Any actor _CreatureAnimKey
+    ; recognizes is unambiguously a creature for our purposes, whatever keyword it happens to carry.
+    If _CreatureAnimKey(ak) != ""
+        Return True
     EndIf
     If !_kwActorTypeNPC
         _kwActorTypeNPC = Game.GetFormFromFile(0x00013794, "Skyrim.esm") as Keyword
@@ -513,9 +676,32 @@ Bool Function IsActorLocked(Actor akActor)
     Return StorageUtil.GetIntValue(akActor, "SNBaka.Locked", 0) == 1
 EndFunction
 
+; True if akA1/akA2 are the exact aggressor+victim pair of a currently-open Baka ground window — i.e.
+; the SAME aggressor who owns this victim's window trying a follow-up action (PinHelpless, GropeHelpless,
+; etc.) on them. The victim is deliberately kept locked for the whole window (see _UnlockAttackerOnly's
+; own comment: "the victim remains locked during the ground window") to stop unrelated third parties
+; grabbing them mid-window — but that same lock was silently blocking the window's OWN aggressor from
+; ever using those actions on their own victim, since LockBoth refused unconditionally. This carve-out
+; only ever matches the specific pair that opened the window, so a third party still gets refused.
+Bool Function _IsGroundWindowOwner(Actor akA1, Actor akA2)
+    If (StorageUtil.GetFormValue(akA2, "SNBaka.GroundWindowAggressor") as Actor) == akA1
+        Return True
+    EndIf
+    If (StorageUtil.GetFormValue(akA1, "SNBaka.GroundWindowAggressor") as Actor) == akA2
+        Return True
+    EndIf
+    Return False
+EndFunction
+
 Bool Function LockBoth(Actor akA1, Actor akA2)
-    If IsActorLocked(akA1) || IsActorLocked(akA2)
+    Bool alreadyLocked = IsActorLocked(akA1) || IsActorLocked(akA2)
+    Bool windowOwner    = alreadyLocked && _IsGroundWindowOwner(akA1, akA2)
+    If alreadyLocked && !windowOwner
+        _Log("[SNBaka] LockBoth: refused — " + akA1 + "/" + akA2 + " already locked (A1=" + IsActorLocked(akA1) + " A2=" + IsActorLocked(akA2) + "), not the ground-window owner pair")
         Return False
+    EndIf
+    If windowOwner
+        _Log("[SNBaka] LockBoth: ground-window-owner carve-out used for " + akA1 + " -> " + akA2)
     EndIf
     StorageUtil.SetIntValue(akA1, "SNBaka.Locked", 1)
     StorageUtil.SetIntValue(akA2, "SNBaka.Locked", 1)
@@ -560,6 +746,7 @@ EndFunction
 Function _MarkDownInteractionIfDowned(Actor ak)
     If ak && _IsDownedAny(ak)
         _bResetDownWindow = True
+        _Log("[SNBaka] _MarkDownInteractionIfDowned: " + ak + " is downed — _bResetDownWindow=True")
     EndIf
 EndFunction
 
@@ -600,15 +787,23 @@ Function _CueDecisionIfDowned(Actor akInitiator, Actor akVictim, Bool abResetWin
     EndIf
     Float now = Utility.GetCurrentRealTime()
     If now - _fLastOpportunityRT < 5.0
+        _Log("[SNBaka] _CueDecisionIfDowned: skipped — debounced (" + (now - _fLastOpportunityRT) + "s since last, need 5.0s), abResetWindow=" + abResetWindow + " still applied" )
+        If abResetWindow
+            _bResetDownWindow = True   ; the window-keep-alive effect still applies even when the cue itself is debounced
+        EndIf
         Return
     EndIf
     _fLastOpportunityRT = now
     If abResetWindow
         _bResetDownWindow = True   ; keep them down for the decision — Baka's own ground window keys off this
     EndIf
+    _Log("[SNBaka] _CueDecisionIfDowned: firing baka_opportunity for " + akInitiator + " -> " + akVictim + " (abResetWindow=" + abResetWindow + ")")
+    ; Bare fact only (no action list) — this "content" arg is SkyrimNet's own narrator/history line,
+    ; separate from whatever the baka_opportunity.yaml trigger renders for the same eventType. The YAML's
+    ; content already names Escalate/HelpUp/Release plus the talk/demand framing; repeating it here just
+    ; produced two different-looking lines for the same moment (confirmed via a screenshot of doubled text).
     SkyrimNetApi.RegisterEvent("baka_opportunity", \
-        akInitiator.GetDisplayName() + " decides: Rape (the Rape action — never StartNewSex), " + \
-        "HelpUp, or Release.", \
+        akVictim.GetDisplayName() + " is still down in front of " + akInitiator.GetDisplayName() + ".", \
         akInitiator, akVictim)
 EndFunction
 
@@ -765,7 +960,7 @@ Event OnAELGameEnd(string asEventName, string asStringArg, float afNumArg, form 
         _bAELVictimEscaped = !playerWon
     EndIf
     _bAELStruggleComplete = True
-    Debug.Trace("[SNBaka] OnAELGameEnd: afNumArg=" + afNumArg + " playerIsVictim=" + _bPlayerIsVictim + " victimEscaped=" + _bAELVictimEscaped)
+    _Log("[SNBaka] OnAELGameEnd: afNumArg=" + afNumArg + " playerIsVictim=" + _bPlayerIsVictim + " victimEscaped=" + _bAELVictimEscaped)
     SPE_Interface.CloseCustomMenu()
 EndEvent
 
@@ -795,7 +990,7 @@ Bool Function _PollResist(Actor akA1, Actor akA2, Float duration, \
             delay = duration - 1.0  ; always leave at least 1s for the QTE
         EndIf
         If delay > 0.0
-            Debug.Trace("[SNBaka] _PollResist: pre-QTE delay " + delay + "s")
+            _Log("[SNBaka] _PollResist: pre-QTE delay " + delay + "s")
             If _HoldAnim(akA1, akA2, sHoldA1, sHoldA2, delay)
                 Return False
             EndIf
@@ -803,16 +998,16 @@ Bool Function _PollResist(Actor akA1, Actor akA2, Float duration, \
         EndIf
     EndIf
 
-    Debug.Trace("[SNBaka] _PollResist: starting QTE. A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName() + " diff=" + fResistDifficulty + " window=" + duration + "s")
+    _Log("[SNBaka] _PollResist: starting QTE. A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName() + " diff=" + fResistDifficulty + " window=" + duration + "s")
     _bAELStruggleComplete = False
     _bAELVictimEscaped    = False
     _bPlayerIsVictim      = a2IsPlayer
     RegisterForModEvent("AEL_GameEnd", "OnAELGameEnd")
 
     Bool ael_ok = AELStruggle.MakeGame(fResistDifficulty)
-    Debug.Trace("[SNBaka] _PollResist: MakeGame returned " + ael_ok)
+    _Log("[SNBaka] _PollResist: MakeGame returned " + ael_ok)
     If !ael_ok
-        Debug.Trace("[SNBaka] _PollResist: MakeGame failed — timed wait")
+        _Log("[SNBaka] _PollResist: MakeGame failed — timed wait")
         UnregisterForModEvent("AEL_GameEnd")
         Return _HoldAnim(akA1, akA2, sHoldA1, sHoldA2, duration)
     EndIf
@@ -844,7 +1039,7 @@ Bool Function _PollResist(Actor akA1, Actor akA2, Float duration, \
     UnregisterForModEvent("AEL_GameEnd")
 
     Bool victimEscaped = _bAELStruggleComplete && _bAELVictimEscaped
-    Debug.Trace("[SNBaka] _PollResist: complete=" + _bAELStruggleComplete + " escaped=" + victimEscaped)
+    _Log("[SNBaka] _PollResist: complete=" + _bAELStruggleComplete + " escaped=" + victimEscaped)
     If _bAELStruggleComplete && !victimEscaped
         _bQTEDefeated = True
     EndIf
@@ -871,25 +1066,40 @@ EndFunction
 
 ; Returns True if the animation should be cut short.
 Bool Function _ShouldAbort(Actor akA1, Actor akA2)
+    ; NO per-tick protection re-assert here anymore — under the park design the victim is either
+    ; Acheron-DEFEATED (native protection, nothing to re-assert) or keep-pacified, and the sweep +
+    ; pacify + traces every poll measurably clogged the starved Nolvus Papyrus VM (confirmed report:
+    ; "many seconds between the teleport and the struggle beginning"). Protection is applied once at
+    ; each transition (_SetupPair / scene start); that's where it belongs now.
     ; A2 entering combat is expected (victim wants to fight back) — do not abort for that.
     ; Only abort if either actor dies/disabled, attacker enters combat,
     ; actors are too far apart (cell leave / teleport), or stop requested.
     If akA1.IsDead() || akA2.IsDead()
-        Debug.Trace("[SNBaka] _ShouldAbort: dead actor — breaking scene")
+        _Log("[SNBaka] _ShouldAbort: dead actor — breaking scene")
         Return True
     EndIf
     If akA1.IsDisabled() || akA2.IsDisabled()
-        Debug.Trace("[SNBaka] _ShouldAbort: disabled actor — breaking scene")
+        _Log("[SNBaka] _ShouldAbort: disabled actor — breaking scene")
         Return True
     EndIf
     If akA1.IsInCombat()
-        ; Combat SHOULD break the held animation — the DoNothing override doesn't stop
-        ; the combat STATE being set, so this still fires; cleanup then frees the actor.
-        Debug.Trace("[SNBaka] _ShouldAbort: " + akA1.GetDisplayName() + " in combat — breaking scene")
-        Return True
+        ; Combat state alone is NOT enough to break the animation anymore -- confirmed from testing:
+        ; a faction ally attacking the pair's own victim (second falmer vs the player mid-struggle)
+        ; flips the pacified aggressor's IsInCombat via the faction alarm, which aborted every struggle
+        ; ~3s in, three times in one session, without anything ever touching the aggressor itself.
+        ; Only a live fight against someone OTHER than this pair's own victim counts -- that's what a
+        ; real hit on the aggressor produces (its combat target switches to whoever hit it), which
+        ; preserves the "a hit to the aggressor stops the aggression" rule this check exists for.
+        Actor a1t = akA1.GetCombatTarget()
+        If a1t && a1t != akA2 && !a1t.IsDead() && !a1t.IsDisabled() && !_IsDownedAny(a1t)
+            _Log("[SNBaka] _ShouldAbort: " + akA1.GetDisplayName() + " in combat against " + a1t.GetDisplayName() + " — breaking scene")
+            Return True
+        EndIf
+        ; else: alarm-only combat state (target is the pair's own victim, downed, dead, or nobody) —
+        ; not an interruption, the struggle continues.
     EndIf
     If akA1.GetDistance(akA2) > 1500.0
-        Debug.Trace("[SNBaka] _ShouldAbort: actors too far apart — breaking scene")
+        _Log("[SNBaka] _ShouldAbort: actors too far apart — breaking scene")
         Return True
     EndIf
     Return _StopRequested(akA1, akA2)
@@ -937,37 +1147,23 @@ Bool Function _HoldAnim(Actor akA1, Actor akA2, String animA1, String animA2, Fl
     Return False
 EndFunction
 
-; True if any alive, enabled actor (other than the victim) is within `radius` of them. Drives the
-; presence-based hold in _DefeatGroundWindow: while someone is around (an aggressor to act, or an ally
-; to help up), the victim stays down; they only recover once the area has truly cleared.
+; True if the aggressor who owns this ground window is still within `radius` of the victim. Drives the
+; presence-based hold in _DefeatGroundWindow: while they're around, the victim stays down; they only
+; recover once the aggressor has truly left.
+; Pure Yamete Redux style: GetDistance() against the ONE known reference (SNBaka.GroundWindowAggressor,
+; set right before the wait loop starts — the only caller of this function), no scanning for unknowns.
+; An unrelated bystander who isn't the tracked aggressor is an accepted blind spot of going this simple
+; — matches Acheron's _NearbyThreat, same trade-off on both sides.
 Bool Function _AnyActorNear(Actor akVictim, Float radius)
     If !akVictim
         Return False
     EndIf
-    ; True cross-cell radius search first — a cell-only sweep (below) misses an actor standing right
-    ; next to the victim but registered in a neighboring exterior cell (common near cell borders),
-    ; which let the victim recover with the attacker still standing right there.
-    ; A DOWNED actor doesn't count as "someone's here" — they can't threaten or witness anything. Without
-    ; this, a battlefield where everyone ends up downed near each other deadlocks: each victim's nearest
-    ; "actor" is another downed body, so nobody's presence check ever comes back empty and nobody recovers.
-    Actor near = Game.FindClosestActorFromRef(akVictim, radius)
-    If near && near != akVictim && !near.IsDead() && !_IsDownedAny(near)
-        Return True
-    EndIf
-    Cell c = akVictim.GetParentCell()
-    If !c
+    Actor aggressor = StorageUtil.GetFormValue(akVictim, "SNBaka.GroundWindowAggressor") as Actor
+    ; A DOWNED aggressor doesn't count as "still here" — they can't threaten or witness anything.
+    If !aggressor || aggressor == akVictim || aggressor.IsDead() || aggressor.IsDisabled() || _IsDownedAny(aggressor)
         Return False
     EndIf
-    Int n = c.GetNumRefs(62)   ; 62 = kCharacter
-    Int i = 0
-    While i < n
-        Actor a = c.GetNthRef(i, 62) as Actor
-        If a && a != akVictim && !a.IsDead() && !a.IsDisabled() && !_IsDownedAny(a) && akVictim.GetDistance(a) < radius
-            Return True
-        EndIf
-        i += 1
-    EndWhile
-    Return False
+    Return akVictim.GetDistance(aggressor) < radius
 EndFunction
 
 ; True if a fight is still going on near the victim — the victim themselves, or any actor within
@@ -977,7 +1173,7 @@ Bool Function _CombatNear(Actor akCenter, Float radius)
     If !akCenter
         Return False
     EndIf
-    If akCenter.IsInCombat()
+    If _HasLiveCombatTarget(akCenter)
         Return True
     EndIf
     Cell c = akCenter.GetParentCell()
@@ -986,13 +1182,51 @@ Bool Function _CombatNear(Actor akCenter, Float radius)
         Int i = 0
         While i < n
             Actor a = c.GetNthRef(i, 62) as Actor
-            If a && a != akCenter && !a.IsDead() && a.IsInCombat() && akCenter.GetDistance(a) < radius
+            If a && a != akCenter && !a.IsDead() && _HasLiveCombatTarget(a) && akCenter.GetDistance(a) < radius
                 Return True
             EndIf
             i += 1
         EndWhile
     EndIf
     Return False
+EndFunction
+
+; IsInCombat() alone is known to linger stale with no live target (confirmed repeatedly in this file —
+; see the creature-escalation "succeed but combatNear stuck true, scene never starts, QTE anim just
+; re-plays on every retry" bug this was written to fix). A genuine ongoing fight has an actual live
+; target; a stale flag with nothing to point at doesn't. Deliberately NOT a blanket StopCombat here —
+; that would also pull the actor out of a fight with someone else entirely unrelated to this check.
+Bool Function _HasLiveCombatTarget(Actor a) Global
+    If !a.IsInCombat()
+        Return False
+    EndIf
+    Actor target = a.GetCombatTarget()
+    ; A DOWNED combat target doesn't count as a live fight -- confirmed real deadlock from testing:
+    ; a falmer whose only remaining "combat target" was an already-downed victim kept reading as
+    ; "still actively fighting someone else" on every single engagement attempt, blocking escalation
+    ; on every downed victim around it indefinitely (combat state never resolves against a target
+    ; that's helpless/ghosted and can neither die nor fight back).
+    Return target && !target.IsDead() && !target.IsDisabled() && !_IsDownedAny(target)
+EndFunction
+
+; Called the instant a struggle resolves with the victim defeated (creature OR human attacker) --
+; starts the post-defeat grace window (fPostDefeatGraceDuration) so passive creature paths leave this
+; specific victim alone for a while instead of re-picking them the moment they're vulnerable again.
+Function _StampDefeatGrace(Actor akVictim)
+    If !akVictim
+        Return
+    EndIf
+    StorageUtil.SetFloatValue(akVictim, "SNBaka.DefeatGraceUntilRT", Utility.GetCurrentRealTime() + fPostDefeatGraceDuration)
+EndFunction
+
+; True while akVictim is still within their post-defeat grace window AND hasn't already been dragged
+; back into a real fight -- a live combat target means "some of them attacked somebody", which ends the
+; grace early by design (see the property comment on fPostDefeatGraceDuration).
+Bool Function _InDefeatGrace(Actor akVictim)
+    If !akVictim || _HasLiveCombatTarget(akVictim)
+        Return False
+    EndIf
+    Return Utility.GetCurrentRealTime() < StorageUtil.GetFloatValue(akVictim, "SNBaka.DefeatGraceUntilRT", 0.0)
 EndFunction
 
 ; Delegate a down to Acheron if it's installed. No plugin probe needed: DefeatActor takes (IsDefeated
@@ -1008,6 +1242,14 @@ Bool Function _DelegateDownToAcheron(Actor akVictim)
     EndIf
     ; The integration stamps this flag on init + every self-heal; absent == integration not installed.
     If StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Present", 0) != 1
+        Return False
+    EndIf
+    ; Present means INSTALLED, not enabled -- the bridge's OnDownRequest gates on its own MCM master
+    ; switch and silently DROPS queued victims while disabled. Delegating into that void cleared our
+    ; local flags with nobody ever actually downing the victim (they'd just stand there). Check the
+    ; same shared StorageUtil key its own MCM writes, so a disabled bridge routes us to the local
+    ; fallback window instead, exactly like an absent one.
+    If StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Enabled", 1) != 1
         Return False
     EndIf
     ; Already held (e.g. Acheron's own combat-defeat consequence already picked this same takedown up)?
@@ -1042,18 +1284,45 @@ EndFunction
 ; (HelpUp/Release/Capture/SellToSlavery/CreatureEscalate) can take the victim over cleanly. Safe to call
 ; on an actor Acheron never held (no-op). Deliberately NOT called by the human Escalate path — the calm/
 ; pacify hold must persist THROUGH the sex scene; _EscalationCleanup re-delegates back to Acheron after.
-Function _ClearAcheronHold(Actor ak)
+; abFullRescue=False skips Acheron's own RescueActor call (the dramatic "saved" event/stat-reset) and
+; only clears the pacify hold via ReleaseActor -- used by Stand Back, which should let the victim get
+; up locally without Acheron treating it as a full rescue (that's what "help up" is for).
+Function _ClearAcheronHold(Actor ak, Bool abFullRescue = True, Bool abKeepPacified = False)
     If !ak
         Return
     EndIf
     If ak.IsBleedingOut() || StorageUtil.GetIntValue(ak, "SNAcheron.Held", 0) == 1
-        Acheron.RescueActor(ak, true)
-        ; OSimpleDefeat (a sibling mod doing the same Acheron+OStim defeat/release flow) always pairs
-        ; RescueActor with an explicit ReleaseActor call. RescueActor is documented as QUEUED/async;
-        ; ReleaseActor removes the pacify state immediately — belt-and-suspenders so pacify doesn't
-        ; linger until Acheron's queued task gets around to it.
-        Acheron.ReleaseActor(ak)
+        ; Held cleared FIRST -- the Acheron bridge's OnActorRescued now redowns anyone rescued while
+        ; still flagged Held (its "nobody recovers on their own" rule); clearing before RescueActor is
+        ; what marks this rescue as sanctioned. RescueActor is documented as queued/async, so the event
+        ; fires well after this line, but don't rely on that ordering by accident -- make it explicit.
         StorageUtil.SetIntValue(ak, "SNAcheron.Held", 0)
+        ; Only touch Acheron's own rescue/release if Acheron still THINKS this actor is defeated --
+        ; calling RescueActor/ReleaseActor on an actor it doesn't track as defeated is a call its native
+        ; code was never meant to receive. Shared native API, no hard reference needed.
+        If Acheron.IsDefeated(ak)
+            If abKeepPacified
+                ; INTERACTION TAKEOVER (a struggle/scene is about to own this actor): end the defeat
+                ; but keep Acheron's native pacify ON through the handoff. Rescuing with abRelease=true
+                ; + ReleaseActor (below) fully strips the protection, and every attempt to rebuild it by
+                ; hand afterward lost a race with the QUEUED rescue task — confirmed live, repeatedly:
+                ; "EVERY time somebody gets escalated, during the period we free from acheron, enemies
+                ; aggro." abRelease=false is Acheron's own primitive for exactly this.
+                Acheron.RescueActor(ak, false)
+            Else
+                If abFullRescue
+                    Acheron.RescueActor(ak, true)
+                EndIf
+                ; OSimpleDefeat (a sibling mod doing the same Acheron+OStim defeat/release flow) always pairs
+                ; RescueActor with an explicit ReleaseActor call. RescueActor is documented as QUEUED/async;
+                ; ReleaseActor removes the pacify state immediately — belt-and-suspenders so pacify doesn't
+                ; linger until Acheron's queued task gets around to it.
+                Acheron.ReleaseActor(ak)
+            EndIf
+        Else
+            _Log("[SNBaka] _ClearAcheronHold: Acheron no longer considers " + ak.GetDisplayName() + " defeated -- skipping RescueActor/ReleaseActor")
+        EndIf
+        _Log("[SNBaka] _ClearAcheronHold: cleared Acheron hold on " + ak.GetDisplayName() + " (abFullRescue=" + abFullRescue + " keepPacified=" + abKeepPacified + ")")
     EndIf
 EndFunction
 
@@ -1089,7 +1358,7 @@ Function _HoldActorAI(Actor akActor, Bool hold)
     If !SNBakaDoNothing
         ; Loud on purpose: if this fires, the CK property isn't set and the SexLab-style
         ; hold can't work — explains an NPC dropping its pose.
-        Debug.Trace("[SNBaka] _HoldActorAI: SNBakaDoNothing package is NONE — AI NOT suppressed for " + akActor.GetDisplayName() + " (set the property in CK)")
+        _Log("[SNBaka] _HoldActorAI: SNBakaDoNothing package is NONE — AI NOT suppressed for " + akActor.GetDisplayName() + " (set the property in CK)")
         Return
     EndIf
     If hold
@@ -1098,7 +1367,7 @@ Function _HoldActorAI(Actor akActor, Bool hold)
         ActorUtil.RemovePackageOverride(akActor, SNBakaDoNothing)
     EndIf
     akActor.EvaluatePackage()
-    Debug.Trace("[SNBaka] _HoldActorAI: " + akActor.GetDisplayName() + " hold=" + hold + " (DoNothing override)")
+    _Log("[SNBaka] _HoldActorAI: " + akActor.GetDisplayName() + " hold=" + hold + " (DoNothing override)")
 EndFunction
 
 ; Pacify an NPC for the duration of an interaction so it can't enter/initiate combat (which
@@ -1122,10 +1391,90 @@ Function _PacifyActor(Actor ak, Bool on)
         If SNBakaCalm
             SNBakaCalm.Cast(ak, ak)
         EndIf
+        _Log("[SNBaka] _PacifyActor: calmed " + ak.GetDisplayName() + " (aggr->0, StopCombat, Calm cast; wasInCombat now=" + ak.IsInCombat() + ")")
     ElseIf StorageUtil.GetIntValue(ak, "SNBaka.Pacified", 0) == 1
         ak.SetActorValue("Aggression", StorageUtil.GetFloatValue(ak, "SNBaka.OrigAggr", 1.0))
         StorageUtil.SetIntValue(ak, "SNBaka.Pacified", 0)
+        ; The Calm EFFECT cast on pacify does NOT end with the aggression restore — with any real
+        ; duration it kept "liberated" aggressors becalmed and passive long after the struggle
+        ; (confirmed: the giant Joylie broke free from attacked nobody). Dispel it explicitly.
+        If SNBakaCalm
+            ak.DispelSpell(SNBakaCalm)
+        EndIf
+        _Log("[SNBaka] _PacifyActor: restored " + ak.GetDisplayName() + " (aggr back to " + StorageUtil.GetFloatValue(ak, "SNBaka.OrigAggr", 1.0) + ", Calm dispelled)")
     EndIf
+EndFunction
+
+; Two-way "combat drops the victim" protection, with one critical exception: NEVER Acheron-pacify the
+; PLAYER. Acheron's pacify on the player is native lockdown we can't partially undo from Papyrus, and
+; it shipped a locked/stiff camera during struggles the build it was introduced (confirmed report).
+; The player gets the stale-lock sweep only: hits whiff on ghost, and the struggle tick (_ShouldAbort)
+; plus the scene wait loop re-clear any re-acquired lock every second.
+Function _ProtectVictimTargeting(Actor akVictim)
+    If akVictim == PlayerRef
+        ; Surrender and SL Defeat both protect a fallen PLAYER the same way (confirmed by reading
+        ; their sources): the Calm-archetype state goes ON THE VICTIM — combat AI treats a calmed
+        ; actor as an invalid target and drops them, per-victim, without touching anyone else's
+        ; fights. Magic-effect archetypes only drive AI, so the player's camera/controls are
+        ; untouched — unlike Acheron's native player pacify (locked camera). Re-cast every tick by
+        ; the struggle/scene polls, so duration doesn't matter.
+        If SNBakaCalm
+            SNBakaCalm.Cast(PlayerRef, PlayerRef)
+            PlayerRef.StopCombatAlarm()
+            _Log("[SNBaka] _ProtectVictimTargeting: Calm state cast on the player-victim (SL Defeat pattern)")
+        Else
+            _Log("[SNBaka] _ProtectVictimTargeting: WARNING — SNBakaCalm spell property is EMPTY, player-victim has no drop-target protection")
+        EndIf
+    ElseIf StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Present", 0) == 1
+        Acheron.PacifyActor(akVictim)
+    EndIf
+    _ClearStaleCombatLocks(akVictim)
+EndFunction
+
+; Acheron's pacify/defeat blocks NEW target acquisition but does NOT make attackers drop an
+; already-locked combat target (confirmed live: giants kept swinging at an Acheron-defeated player;
+; "after StopCombat(): IsInCombat()=TRUE" — the victim's own flag can't clear while others hold locks
+; on them; the ATTACKERS' locks are what this clears). Only actors whose current combat target IS the
+; victim are touched — an intercessor fighting the AGGRESSOR keeps its fight untouched.
+Function _ClearStaleCombatLocks(Actor akVictim)
+    Actor[] loaded = PO3_SKSEFunctions.GetActorsByProcessingLevel(0)
+    Int i = 0
+    While i < loaded.Length
+        Actor atk = loaded[i]
+        If atk && atk != akVictim && atk != PlayerRef && !atk.IsDead() && atk.GetCombatTarget() == akVictim
+            atk.StopCombat()
+            atk.EvaluatePackage()
+            _Log("[SNBaka] _ClearStaleCombatLocks: " + atk.GetDisplayName() + " was still locked onto " + akVictim.GetDisplayName() + " — combat stopped")
+        EndIf
+        i += 1
+    EndWhile
+EndFunction
+
+; End every "lover"-rank (4) anti-re-aggro link between this victim and any loaded CREATURE — our
+; escalations always use rank 4 with a supported creature, so this signature can't hit a real spouse.
+; Runs on every genuine liberation: repairs the CURRENT pair even if the caller lost track of it, and
+; self-heals stale links baked into saves by builds that never reverted them (confirmed symptom: a
+; giant that had previously beaten Joylie would never attack her again).
+Function _ClearAggressorBonds(Actor akVictim)
+    Actor[] loaded = PO3_SKSEFunctions.GetActorsByProcessingLevel(0)
+    Int i = 0
+    While i < loaded.Length
+        Actor a = loaded[i]
+        If a && a != akVictim && a != PlayerRef && !a.IsDead() && a.GetRelationshipRank(akVictim) == 4 && _CreatureAnimKey(a) != ""
+            a.SetRelationshipRank(akVictim, 0)
+            If akVictim != PlayerRef
+                akVictim.SetRelationshipRank(a, 0)
+            EndIf
+            _Log("[SNBaka] _ClearAggressorBonds: cleared lover-rank link " + a.GetDisplayName() + " <-> " + akVictim.GetDisplayName())
+        EndIf
+        ; Stray-Calm sweep (same loop, essentially free): an actor still carrying our Calm effect
+        ; while NOT flagged pacified is a leftover from an interrupted cycle — reported as actors
+        ; "calmed even when they should not be anymore". Dispels only OUR spell; no-op otherwise.
+        If a && a != PlayerRef && SNBakaCalm && StorageUtil.GetIntValue(a, "SNBaka.Pacified", 0) == 0
+            a.DispelSpell(SNBakaCalm)
+        EndIf
+        i += 1
+    EndWhile
 EndFunction
 
 ; Pacify EVERYONE near the victim who is hostile to them (the captor's whole group), so a capture
@@ -1163,7 +1512,7 @@ Function _PacifyNearbyHostiles(Actor akVictim, Float radius = 3000.0)
         EndIf
         i += 1
     EndWhile
-    Debug.Trace("[SNBaka] _PacifyNearbyHostiles: pacified " + pacified + " hostile(s) near " + akVictim.GetDisplayName())
+    _Log("[SNBaka] _PacifyNearbyHostiles: pacified " + pacified + " hostile(s) near " + akVictim.GetDisplayName())
 EndFunction
 
 ; Keeps the victim downed for duration seconds after a violent action.
@@ -1171,11 +1520,11 @@ EndFunction
 ; Recovery is skipped if combat starts or a stop is requested.
 Function _RecoveryPeriod(Actor akVictim, Actor akWitness, Float duration)
     If !akVictim || akVictim.IsDead() || akVictim.IsInCombat()
-        Debug.Trace("[SNBaka] _RecoveryPeriod: skipped for " + akVictim.GetDisplayName() + " (dead=" + akVictim.IsDead() + " inCombat=" + akVictim.IsInCombat() + ")")
+        _Log("[SNBaka] _RecoveryPeriod: skipped for " + akVictim.GetDisplayName() + " (dead=" + akVictim.IsDead() + " inCombat=" + akVictim.IsInCombat() + ")")
         Return
     EndIf
     Bool victimIsPlayer = (akVictim == PlayerRef)
-    Debug.Trace("[SNBaka] _RecoveryPeriod: victim=" + akVictim.GetDisplayName() + " isPlayer=" + victimIsPlayer + " duration=" + duration)
+    _Log("[SNBaka] _RecoveryPeriod: victim=" + akVictim.GetDisplayName() + " isPlayer=" + victimIsPlayer + " duration=" + duration)
     If victimIsPlayer
         Game.DisablePlayerControls(True, True, False, False, True, False, False, False)
         ; (No SetDontMove on the player — it locked the camera. The NPC is ghosted so it can't
@@ -1187,7 +1536,7 @@ Function _RecoveryPeriod(Actor akVictim, Actor akWitness, Float duration)
     If !victimIsPlayer
         akVictim.SetRestrained(True)
         akVictim.SetDontMove(True)
-        Debug.Trace("[SNBaka] _RecoveryPeriod: Restrained+DontMove set on NPC")
+        _Log("[SNBaka] _RecoveryPeriod: Restrained+DontMove set on NPC")
     EndIf
     Utility.Wait(0.3)
     If !victimIsPlayer
@@ -1222,9 +1571,9 @@ Function _RecoveryPeriod(Actor akVictim, Actor akWitness, Float duration)
     If victimIsPlayer
         Game.EnablePlayerControls()
         Debug.SendAnimationEvent(akVictim, "IdleForceDefaultState")
-        Debug.Trace("[SNBaka] _RecoveryPeriod: player controls re-enabled")
+        _Log("[SNBaka] _RecoveryPeriod: player controls re-enabled")
     EndIf
-    Debug.Trace("[SNBaka] _RecoveryPeriod: done for " + akVictim.GetDisplayName())
+    _Log("[SNBaka] _RecoveryPeriod: done for " + akVictim.GetDisplayName())
 EndFunction
 
 ; Puts akVictim into the defeat down-pose. PURE ANIMATION — no Kill(), no vanilla bleedout,
@@ -1266,7 +1615,7 @@ String Function _PickDownPose(Actor akVictim)
 EndFunction
 
 Function _Bleedout(Actor akVictim, Actor akWitness)
-    Debug.Trace("[SNBaka] _Bleedout: victim=" + akVictim.GetDisplayName() + " isPlayer=" + (akVictim == PlayerRef))
+    _Log("[SNBaka] _Bleedout: victim=" + akVictim.GetDisplayName() + " isPlayer=" + (akVictim == PlayerRef))
     ; Clear any looping paired animation still playing on the victim first.
     ; Without this, BaboBackHugMolestLoopF / Struggle loops etc. block the KnockDown event.
     Debug.SendAnimationEvent(akVictim, "IdleForceDefaultState")
@@ -1284,9 +1633,9 @@ Function _Bleedout(Actor akVictim, Actor akWitness)
     EndIf
     StorageUtil.SetStringValue(akVictim, "SNBaka.DownPose", downAnim)
     Debug.SendAnimationEvent(akVictim, downAnim)
-    Debug.Trace("[SNBaka] _Bleedout: down pose = " + downAnim + " on " + akVictim.GetDisplayName())
+    _Log("[SNBaka] _Bleedout: down pose = " + downAnim + " on " + akVictim.GetDisplayName())
     _sDownPose = ""
-    Debug.Trace("[SNBaka] _Bleedout: bleedout triggered on " + akVictim.GetDisplayName())
+    _Log("[SNBaka] _Bleedout: bleedout triggered on " + akVictim.GetDisplayName())
     If bExpressionsEnabled
         _ApplyMoodExpression(akVictim, "pained")
     EndIf
@@ -1296,31 +1645,115 @@ EndFunction
 ; Stands both player and NPC up with IdleForceDefaultState (no vanilla BleedoutStop, no Acheron).
 ; Only restores HP on an Essential NPC that was ever killed into bleedout (legacy guard).
 ; Caller must EnablePlayerControls after this for the player.
-Function _Recover(Actor akVictim)
-    Debug.Trace("[SNBaka] _Recover: victim=" + akVictim.GetDisplayName() + " isPlayer=" + (akVictim == PlayerRef))
+; Matching "stand up" transition for a known down pose, or "" if the pose is unrecognized/empty — the
+; latter happens for a PURE Acheron-native combat defeat (no Baka QTE ever ran, so SNBaka.DownPose was
+; never set), which is common and not an error. Global so Acheron's own _Recover can reuse the same
+; mapping without a hard script reference (StorageUtil key only).
+String Function _GetUpAnimFor(String downPose) Global
+    If downPose == "Babo_DefeatTraumaLie"
+        Return "Babo_DefeatTraumaStand"
+    EndIf
+    Return ""
+EndFunction
+
+; Borrowed from the Surrender mod's own proven technique (DBSurrenderActive.psc): while an actor is in
+; OUR downed state, force them Essential — but ONLY if they weren't already Essential or Protected, and
+; track that WE were the ones who did it, so recovery only ever undoes our own change, never someone
+; else's existing protection. Confirmed real gap otherwise: nothing currently stops a downed/pinned
+; victim from just dying to a stray follow-up hit while helpless, since restraining them (SetRestrained/
+; SetDontMove) does nothing about incoming damage.
+Function _ForceEssentialForDown(Actor ak, Bool abForce)
+    If !ak
+        Return
+    EndIf
+    ActorBase bse = ak.GetActorBase()
+    If !bse
+        Return
+    EndIf
+    If abForce
+        ; NO forced protection anymore -- explicit spec change: a downed actor lives or dies by their
+        ; own BASE flags. Base Essential/Protected keep their vanilla immunities; everyone else can be
+        ; finished off while down by accumulated damage from anything (stray hits, fire, an NPC that
+        ; keeps swinging), and a single PLAYER hit executes them outright (see OnPlayerHitActor).
+        ; "It's life." The call sites are kept as the single policy point in case this changes again.
+    Else
+        If StorageUtil.GetIntValue(ak, "SNBaka.ProtectForcedByUs", 0) == 1
+            bse.SetProtected(False)
+            StorageUtil.SetIntValue(ak, "SNBaka.ProtectForcedByUs", 0)
+            _Log("[SNBaka] _ForceEssentialForDown: restored non-Protected on " + ak.GetDisplayName())
+        EndIf
+        ; Backward-compat restores for state left by earlier builds of this guard: the brief
+        ; Essential-forcing version, and the Ghost the bridge used to apply at down-time (the Ghost
+        ; leak was a confirmed bug: permanently invulnerable player, unresolvable enemy combat).
+        If StorageUtil.GetIntValue(ak, "SNBaka.EssentialForcedByUs", 0) == 1
+            bse.SetEssential(False)
+            StorageUtil.SetIntValue(ak, "SNBaka.EssentialForcedByUs", 0)
+            _Log("[SNBaka] _ForceEssentialForDown: restored non-Essential on " + ak.GetDisplayName() + " (legacy build residue)")
+        EndIf
+        If StorageUtil.GetIntValue(ak, "SNAcheron.GhostForcedByUs", 0) == 1
+            ak.SetGhost(False)
+            StorageUtil.SetIntValue(ak, "SNAcheron.GhostForcedByUs", 0)
+            _Log("[SNBaka] _ForceEssentialForDown: cleared legacy down-state Ghost on " + ak.GetDisplayName())
+        EndIf
+    EndIf
+EndFunction
+
+Function _Recover(Actor akVictim, Bool abFullRescue = True)
+    _Log("[SNBaka] _Recover: victim=" + akVictim.GetDisplayName() + " isPlayer=" + (akVictim == PlayerRef))
+    ; Force Essential FIRST, unconditionally, before checking/restoring health below. Every entry point
+    ; we control (our own ground window, _CueDowned, RunConsequence) already forces this the moment
+    ; something goes down — but _DispatchDownedAction's "external" branch (Stand Back / HelpUp / Escalate
+    ; on a victim downed by something else entirely — SeverActions, vanilla combat, a mod with no Baka
+    ; involvement) reaches this same function WITHOUT ever having forced it, on the assumption the actor
+    ; was already protected somehow. A generic recruited follower usually isn't Essential by default, so
+    ; that assumption killed one (confirmed: acting on a bleeding-out, non-Essential follower here left
+    ; her with no safety net at all). _ForceEssentialForDown no-ops if already Essential/Protected, so
+    ; this is safe to call unconditionally regardless of which path got here.
+    _ForceEssentialForDown(akVictim, True)
+    ; Restore health FIRST, while still Essential (ours or their own) — only THEN clear our forced flag.
+    ; Reversing this order would mean an actor we made Essential, sitting at ~0 health from being down,
+    ; could actually die the instant we un-flag them, before ever getting the health restored below.
     If akVictim.IsEssential() && akVictim.IsDead()
         ; (NPC only) restore HP if an Essential NPC was ever killed into bleedout.
         akVictim.RestoreActorValue("Health", 1000.0)
         Utility.Wait(0.1)
     EndIf
+    _ForceEssentialForDown(akVictim, False)
+    ; Play a stand-up transition first — IdleForceDefaultState alone just snaps the animation graph to
+    ; idle with no visible transition, which is what made every recovery look instant/wrong. Use the
+    ; exact matching clip when we know the down pose (Babo_DefeatTraumaLie -> ...Stand); otherwise fall
+    ; back to "staggerStart" (the same generic get-up-with-a-stagger event already used by the "Stand
+    ; Back" outcome elsewhere in this file) rather than nothing at all — this covers a pure Acheron-
+    ; native combat defeat, where SNBaka.DownPose was never set because no Baka QTE ever ran. Still send
+    ; IdleForceDefaultState afterward regardless, as the final safety net guaranteeing a clean state even
+    ; if the transition doesn't fully resolve on its own.
+    String downPose  = StorageUtil.GetStringValue(akVictim, "SNBaka.DownPose", "")
+    String getUpAnim = _GetUpAnimFor(downPose)
+    If getUpAnim == ""
+        getUpAnim = "staggerStart"
+    EndIf
+    Debug.SendAnimationEvent(akVictim, getUpAnim)
+    Utility.Wait(1.0)
+    _Log("[SNBaka] _Recover: played get-up transition " + getUpAnim + " for down pose '" + downPose + "'")
+    StorageUtil.SetStringValue(akVictim, "SNBaka.DownPose", "")
     ; Stand back up — same for player and NPC now (no vanilla BleedoutStop, no Acheron).
     Debug.SendAnimationEvent(akVictim, "IdleForceDefaultState")
-    Debug.Trace("[SNBaka] _Recover: stand-up sent to " + akVictim.GetDisplayName())
+    _Log("[SNBaka] _Recover: stand-up sent to " + akVictim.GetDisplayName())
     If bExpressionsEnabled
         _ClearExpression(akVictim)
     EndIf
     ; This is the ONLY stand-up path that didn't also clear Acheron's hold flag — every other
-    ; resolution (Rape, HelpUp, Release, SellToSlavery) does. Without this, an Acheron-initiated
+    ; resolution (Escalate, HelpUp, Release, SellToSlavery) does. Without this, an Acheron-initiated
     ; combat defeat that resolves via passive window-timeout (nobody escalated/helped in time)
     ; left SNAcheron.Held stuck at 1 forever: the victim visibly stands up, but every downed-state
     ; check (_IsDownedAny, eligibility, etc.) kept reading them as still down, since the bridge's
     ; own polling loop is what would normally clear it on an existing save it may never run again.
-    _ClearAcheronHold(akVictim)
+    _ClearAcheronHold(akVictim, abFullRescue)
 EndFunction
 
 Function _StartTears(Actor akVictim)
     If !bAnimatedTearsEnabled || !akVictim
-        Debug.Trace("[SNBaka] _StartTears: GATED — enabled=" + bAnimatedTearsEnabled + " victim=" + akVictim)
+        _Log("[SNBaka] _StartTears: GATED — enabled=" + bAnimatedTearsEnabled + " victim=" + akVictim)
         Return
     EndIf
     ; Setup() does NOT run on every load (its OnPlayerLoadGame doesn't fire on a Quest
@@ -1329,10 +1762,10 @@ Function _StartTears(Actor akVictim)
     ; EmoTears4NPCs.esp.  (The old wrong 0x322E was a visual-frame effect, not a spell.)
     If !TearSpell
         TearSpell = Game.GetFormFromFile(0x000802, "EmoTears4NPCs.esp") as Spell
-        Debug.Trace("[SNBaka] _StartTears: lazy-resolved TearSpell=" + TearSpell)
+        _Log("[SNBaka] _StartTears: lazy-resolved TearSpell=" + TearSpell)
     EndIf
     If !TearSpell || akVictim.GetActorBase().GetSex() != 1
-        Debug.Trace("[SNBaka] _StartTears: GATED — TearSpell=" + TearSpell + " female=" + (akVictim.GetActorBase().GetSex() == 1) + " for " + akVictim.GetDisplayName())
+        _Log("[SNBaka] _StartTears: GATED — TearSpell=" + TearSpell + " female=" + (akVictim.GetActorBase().GetSex() == 1) + " for " + akVictim.GetDisplayName())
         Return
     EndIf
     ; The EmoTears apply spell TOGGLES the tear ability, and _StartTears is called
@@ -1345,9 +1778,9 @@ Function _StartTears(Actor akVictim)
         _TearVictim = akVictim
         TearSpell.Cast(akVictim)
         StorageUtil.SetIntValue(akVictim, "SNBaka.TearsOn", 1)
-        Debug.Trace("[SNBaka] _StartTears: CAST tears on " + akVictim.GetDisplayName())
+        _Log("[SNBaka] _StartTears: CAST tears on " + akVictim.GetDisplayName())
     Else
-        Debug.Trace("[SNBaka] _StartTears: SKIPPED " + akVictim.GetDisplayName() + " — SNBaka.TearsOn already 1 (stuck flag? prior scene didn't _StopTears)")
+        _Log("[SNBaka] _StartTears: SKIPPED " + akVictim.GetDisplayName() + " — SNBaka.TearsOn already 1 (stuck flag? prior scene didn't _StopTears)")
     EndIf
     ; Out-of-sex crying shows a sad face; during sex the afraid/pained/angry cycle owns the face.
     If bExpressionsEnabled && !IsInSexAnimation(akVictim)
@@ -1406,7 +1839,7 @@ Function _ApplySexTears(Actor akVictim)
     EndIf
     UpdateFaceMarks(akVictim, heat)
     StorageUtil.FormListAdd(Self, "SkyrimNetSDB.SpankedActors", akVictim, True)
-    Debug.Trace("[SNBaka] _ApplySexTears: SlaveTats tear overlay (heat=" + heat + ") on " + akVictim.GetDisplayName())
+    _Log("[SNBaka] _ApplySexTears: SlaveTats tear overlay (heat=" + heat + ") on " + akVictim.GetDisplayName())
     ; NOTE: facial expressions during sex are left to SexLab's own per-stage expression system —
     ; we don't fight it.  Only the tear OVERLAY (above) is ours during sex.
 EndFunction
@@ -1478,10 +1911,10 @@ Function _ApplyMoodExpression(Actor akActor, String mood)
     ElseIf mood == "confused"
         _mfgX(akActor, 2, 5, 100)
     Else
-        Debug.Trace("[SNBaka] _ApplyMoodExpression: unknown mood '" + mood + "'")
+        _Log("[SNBaka] _ApplyMoodExpression: unknown mood '" + mood + "'")
         Return
     EndIf
-    Debug.Trace("[SNBaka] _ApplyMoodExpression: " + mood + " on " + akActor.GetDisplayName() + " (intensity " + fExpressionIntensity + ")")
+    _Log("[SNBaka] _ApplyMoodExpression: " + mood + " on " + akActor.GetDisplayName() + " (intensity " + fExpressionIntensity + ")")
 EndFunction
 
 Function _ClearExpression(Actor akActor)
@@ -1511,7 +1944,7 @@ EndFunction
 ; Single parameterized action replacing the old one-yaml-per-mood set (happy/angry/afraid/sad/
 ; pained/surprised/confused). _ApplyMoodExpression silently no-ops on an unrecognized mood string.
 Function Express_Execute(Actor akInitiator, Actor akTarget, String mood)
-    Debug.Trace("[SNBakaACT] Express ENTER mood=" + mood)
+    _Log("[SNBakaACT] Express ENTER mood=" + mood)
     _HoldMoodExpression(akInitiator, mood)
 EndFunction
 
@@ -1594,7 +2027,7 @@ Function PlayPairedLoopAnim(Actor akA1, Actor akA2, \
                 akA1, akA2)
 
             Bool escaped = _PollResist(akA1, akA2, loopDur, sResistA1, sResistA2, holdA1, holdA2)
-            Debug.Trace("[SNBaka] LoopAnim: _PollResist done. escaped=" + escaped + " _bQTEDefeated=" + _bQTEDefeated)
+            _Log("[SNBaka] LoopAnim: _PollResist done. escaped=" + escaped + " _bQTEDefeated=" + _bQTEDefeated)
 
             If escaped
                 Debug.SendAnimationEvent(akA1, sStopA1)
@@ -1671,7 +2104,7 @@ Function PlayPairedSimpleAnim(Actor akA1, Actor akA2, \
             akA1, akA2)
 
         Bool escaped = _PollResist(akA1, akA2, duration, "Babo_DefeatResist_A1_S1", "Babo_DefeatResist_A2_S1", animA1, animA2)
-        Debug.Trace("[SNBaka] SimpleAnim: _PollResist done. escaped=" + escaped + " _bQTEDefeated=" + _bQTEDefeated)
+        _Log("[SNBaka] SimpleAnim: _PollResist done. escaped=" + escaped + " _bQTEDefeated=" + _bQTEDefeated)
 
         If escaped
             Debug.SendAnimationEvent(akA1, "Babo_DefeatResist_A1_S2")
@@ -1707,6 +2140,61 @@ EndFunction
 ;   A1 still advances through each stage animation normally.
 ;   Player can escape at any point during any stage.
 ;   This allows the NPC to visually escalate while the player fights back.
+; Confirmed in live testing: a completely unrelated mod (SkyrimNet_PairedAnimations) can have the
+; player's OWN follower "ExecuteTarget" (a scripted kill-move) the player mid-struggle, because that
+; mod's eligibility check never considers allegiance at all — any actor is "eligible" against any
+; target. We can't fix another mod's code from here, but AddPackageOverride's priority-100 hold already
+; blocks every OTHER package/AI-driven behavior from being assigned to an actor while it's active — so
+; forcing that same hold onto nearby teammates for the duration of OUR OWN scenes should keep them from
+; being hijacked into a kill-scene package by anything else, regardless of what that other mod's
+; eligibility logic does or doesn't check.
+; akAggressor: the OTHER member of THIS pair (the attacker/creature) — excluded from the sweep below
+; (it's handled separately by _SetupPair), never touched otherwise.
+; Every OTHER nearby actor (any NPC or creature, ally or hostile, human or beast) is held off combat
+; for the duration -- a "cloak of calm" so the pair is effectively ignored by anyone not actually
+; involved, without literally turning them invisible. The player is the sole exception: never held,
+; always free to interject or be interjected upon. Any hit that DOES land despite this (the player,
+; or anything that slips past) still aborts the struggle/scene as normal -- this only stops OTHER
+; actors from choosing to start something, it doesn't make the pair invulnerable.
+Function _ProtectNearbyAllies(Actor akCenter, Actor akAggressor, Bool abHold)
+    If !akCenter
+        Return
+    EndIf
+    ; LOADED-AREA enumeration (po3), same fix as the creature/companion scans: the old single-cell
+    ; sweep + single-closest supplement missed everything registered in a linked cell — confirmed
+    ; live yet again with giants aggroing straight through a "protected" QTE from the next cell over.
+    ; Hold is radius-capped so a whole loaded exterior doesn't get frozen; RELEASE is uncapped so a
+    ; held actor can never be stranded in DoNothing by positional drift (releasing a never-held actor
+    ; is a no-op).
+    Actor[] loaded = PO3_SKSEFunctions.GetActorsByProcessingLevel(0)
+    Int held = 0
+    Int i = 0
+    While i < loaded.Length
+        Actor a = loaded[i]
+        If a && a != akCenter && a != akAggressor && a != PlayerRef && !a.IsDead() && (!abHold || a.GetDistance(akCenter) <= 3000.0)
+            _HoldActorAI(a, abHold)
+            ; Deliberately NO calm/pacify on bystanders — a cloak here stopped UNRELATED fights nearby
+            ; (correct objection from testing). The victim-side calm in _ProtectVictimTargeting is what
+            ; makes attackers drop the pair (SL Defeat / Surrender pattern: the calm goes ON the fallen
+            ; actor, and combat AI treats a calmed actor as an invalid target). Once an attacker loses
+            ; its only target and exits combat, THIS hold is what keeps it from wandering back in
+            ; (package overrides can't grip an actor still in combat — combat AI outranks packages).
+            If abHold
+                held += 1
+                ; (No per-actor trace — a den's worth of Debug.Trace lines per hold, each recomputing
+                ; hostility/distance just for the log, was real VM load on an already-starved setup.
+                ; The summary below says how many; _PacifyActor still traces the transitions.)
+            EndIf
+        EndIf
+        i += 1
+    EndWhile
+    If abHold
+        _Log("[SNBaka] _ProtectNearbyAllies: " + held + " actor(s) held+calmed around " + akCenter.GetDisplayName())
+    Else
+        _Log("[SNBaka] _ProtectNearbyAllies: released holds/calms around " + akCenter.GetDisplayName())
+    EndIf
+EndFunction
+
 Function PlayPairedSequence(Actor akA1, Actor akA2, \
         Float xLocal, Float yLocal, Float rotOffset, \
         String[] animsA1, String[] animsA2, Float stageTimer, \
@@ -1722,6 +2210,13 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
         ; (No SetDontMove on the player — it locked the camera. The NPC is ghosted so it can't
         ; shove the player, and the player isn't ghosted so they won't fall; no pin needed.)
     EndIf
+    ; Not gated on player involvement — a nearby teammate can be hijacked into attacking whoever's
+    ; downed regardless of whether the player is one of the two actors in THIS pairing.
+    _ProtectNearbyAllies(akA2, akA1, True)
+    ; Reset the escape flag unconditionally, not just inside the resistable branch below -- a
+    ; NON-resistable sequence used to leave whatever value the PREVIOUS struggle set, and the
+    ; post-escape grace at the bottom of this function keys off it.
+    _bAELVictimEscaped = False
 
     ObjectReference marker1 = None
     ObjectReference marker2 = None
@@ -1759,9 +2254,9 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
 
         Bool ael_ok = False
         If !aborted
-            Debug.Trace("[SNBaka] PlayPairedSequence: starting QTE. A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName())
+            _Log("[SNBaka] PlayPairedSequence: starting QTE. A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName())
             ael_ok = AELStruggle.MakeGame(fResistDifficulty)
-            Debug.Trace("[SNBaka] PlayPairedSequence: MakeGame returned " + ael_ok)
+            _Log("[SNBaka] PlayPairedSequence: MakeGame returned " + ael_ok)
         EndIf
 
         If ael_ok
@@ -1771,6 +2266,12 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
             Float tick = 0.1
             Float maxWait = stageTimer * animsA1.Length + 10.0
             Int stageIdx = 0
+            ; Hold stage 0 for the ENTIRE QTE — no longer advances stages on stageTimer while the
+            ; struggle is still undecided. That used to let the visible pose drift completely out of
+            ; sync with the actual QTE outcome (the animation could already be 2-3 stages further along
+            ; than what the minigame had actually resolved). Stages now only ever advance AFTER the QTE
+            ; completes, branching into the win/lose resolution below — the same pattern the timed
+            ; (non-QTE) fallback further down already uses for NPC-vs-NPC.
             While !_bAELStruggleComplete && !aborted && elapsed < maxWait
                 Utility.Wait(tick)
                 elapsed      += tick
@@ -1779,15 +2280,8 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
                 If _ShouldAbort(akA1, akA2)
                     aborted = True
                 EndIf
-                If !aborted && stageElapsed >= stageTimer && stageIdx < animsA1.Length - 1
-                    stageIdx += 1
-                    stageElapsed = 0.0
-                    sinceRe = 0.0
-                    Debug.SendAnimationEvent(akA1, animsA1[stageIdx])
-                    Debug.SendAnimationEvent(akA2, animsA2[stageIdx])
-                    Debug.Trace("[SNBaka] PlayPairedSequence: stage -> " + stageIdx)
-                ElseIf !aborted && sinceRe >= 2.0
-                    ; Re-assert the current stage ~every 2s so PC-NPC actors can't drift/freeze mid-QTE.
+                If !aborted && sinceRe >= 2.0
+                    ; Re-assert stage 0 ~every 2s so PC-NPC actors can't drift/freeze mid-QTE.
                     sinceRe = 0.0
                     Debug.SendAnimationEvent(akA1, animsA1[stageIdx])
                     Debug.SendAnimationEvent(akA2, animsA2[stageIdx])
@@ -1799,7 +2293,7 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
                 Utility.Wait(0.3)
             EndIf
             escaped = _bAELStruggleComplete && _bAELVictimEscaped
-            Debug.Trace("[SNBaka] PlayPairedSequence: QTE done. complete=" + _bAELStruggleComplete + " escaped=" + escaped)
+            _Log("[SNBaka] PlayPairedSequence: QTE done. complete=" + _bAELStruggleComplete + " escaped=" + escaped)
             If _bAELStruggleComplete && !escaped
                 _bQTEDefeated = True
                 ; Finish remaining time in the current stage first.
@@ -1837,13 +2331,13 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
             EndWhile
             If !aborted
                 If npcEscaped
-                    Debug.Trace("[SNBaka] PlayPairedSequence: NPC random — victim escapes")
+                    _Log("[SNBaka] PlayPairedSequence: NPC random — victim escapes")
                     _bAELVictimEscaped = True
                     Debug.SendAnimationEvent(akA1, "Babo_DefeatResist_A1_S2")
                     Debug.SendAnimationEvent(akA2, "Babo_DefeatResist_A2_S2")
                     Utility.Wait(1.5)
                 ElseIf bResistable
-                    Debug.Trace("[SNBaka] PlayPairedSequence: NPC random — attacker wins")
+                    _Log("[SNBaka] PlayPairedSequence: NPC random — attacker wins")
                     _bQTEDefeated = True
                 EndIf
             EndIf
@@ -1920,7 +2414,13 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
         EndIf
     EndIf
 
+    _ProtectNearbyAllies(akA2, akA1, False)
     _CleanupPair(akA1, akA2, marker1, marker2, a1IsPlayer || a2IsPlayer, _bQTEDefeated)
+    ; The victim WON -- keep them untouchable a while longer (see _PostEscapeGrace). Must run AFTER
+    ; _CleanupPair, whose unconditional SetGhost(False) would wipe it.
+    If _bAELVictimEscaped
+        _PostEscapeGrace(akA2)
+    EndIf
 EndFunction
 
 ; --- _CleanupPair ---
@@ -1981,7 +2481,7 @@ Function _MatchPairHeight(Actor akA1, Actor akA2)
         StorageUtil.SetFloatValue(scaleMe, "SNBaka.OrigScale", cur)
         StorageUtil.FormListAdd(Self, "SNBaka.ScaledActors", scaleMe, False)
         scaleMe.SetScale(ref)
-        Debug.Trace("[SNBaka] HeightMatch: " + scaleMe.GetDisplayName() + " " + cur + " -> " + ref)
+        _Log("[SNBaka] HeightMatch: " + scaleMe.GetDisplayName() + " " + cur + " -> " + ref)
     EndIf
 EndFunction
 
@@ -2014,11 +2514,37 @@ EndFunction
 
 Function _CleanupPair(Actor akA1, Actor akA2, \
         ObjectReference marker1, ObjectReference marker2, Bool hadPlayer, Bool bSkipA2Reset = False)
-    Debug.Trace("[SNBaka] CleanupPair: A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName() + " hadPlayer=" + hadPlayer)
+    _Log("[SNBaka] CleanupPair: A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName() + " hadPlayer=" + hadPlayer)
     akA1.SetVehicle(None)
     akA2.SetVehicle(None)
+    ; Reset the pose FIRST, while STILL ghosted/restrained/pacified/AI-held -- confirmed real bug from
+    ; testing (a creature "fell and got stuck" mid-combat, not tied to timing since a prior scene): the
+    ; OLD order restored vulnerability (Ghost/AI/aggression/movement) BEFORE sending IdleForceDefaultState,
+    ; leaving a window where the actor could get hit and staggered while still visually mid-struggle-pose.
+    ; A stagger outranks a plain idle-force event and nothing ever re-sent it once the stagger cleared,
+    ; so it just stuck there. A direct SendAnimationEvent isn't gated by the AI package, so it still
+    ; reaches the behavior graph with DoNothing/pacify/ghost all still active -- nothing can interrupt it.
+    Debug.SendAnimationEvent(akA1, "IdleForceDefaultState")
+    If !bSkipA2Reset
+        Debug.SendAnimationEvent(akA2, "IdleForceDefaultState")
+    EndIf
+    Utility.Wait(0.3)
+    akA1.EvaluatePackage()
+    If !bSkipA2Reset
+        akA2.EvaluatePackage()
+    EndIf
+    ; Only NOW restore vulnerability/AI/aggression -- the pose is already clean, so nothing they get hit
+    ; with from this point on can interrupt a reset that's already finished.
     akA1.SetGhost(False)
     akA2.SetGhost(False)
+    ; These unconditional SetGhost(False) calls also wipe the DOWN-state ghost the Acheron bridge
+    ; applies (its _ForceEssentialForDown), whose bookkeeping flag lives on the actor -- clear the flag
+    ; to match, or a victim re-downed right after this paired animation can never be re-ghosted (the
+    ; force function sees the stale flag==1 and skips SetGhost, leaving them hittable while helpless).
+    ; Confirmed as the most plausible chain behind a follower dying while downed: struggle ends ->
+    ; un-ghosted here with stale flag -> redown never re-ghosts -> stray hit lands for real.
+    StorageUtil.SetIntValue(akA1, "SNAcheron.GhostForcedByUs", 0)
+    StorageUtil.SetIntValue(akA2, "SNAcheron.GhostForcedByUs", 0)
     ; Restore collision (teammate flag) and remove the DoNothing AI override.
     SNBakaUI.SetNoCollision(akA1, False)
     SNBakaUI.SetNoCollision(akA2, False)
@@ -2030,6 +2556,12 @@ Function _CleanupPair(Actor akA1, Actor akA2, \
     ; Un-pacify (restore original aggression) both.
     _PacifyActor(akA1, False)
     _PacifyActor(akA2, False)
+    ; Deliberately NO Acheron.ReleaseActor here. Releasing the victim's two-way pacify at pair-cleanup
+    ; opened a real window (confirmed live, 15:40 session): QTE lost -> cleanup released the player ->
+    ; all three falmers re-targeted them during the struggle->scene transition -> the scene CTD guard
+    ; refused the scene. The victim's untargetable state must survive every internal transition
+    ; (downed -> struggle -> scene -> re-down); it ends ONLY at the genuine exits: _PostEscapeGrace
+    ; (escape/scene end, which releases after the mercy window) or recovery via _ClearAcheronHold.
     akA1.StopTranslation()
     akA2.StopTranslation()
     akA1.SetRestrained(False)
@@ -2039,28 +2571,73 @@ Function _CleanupPair(Actor akA1, Actor akA2, \
     If hadPlayer
         Game.ForceThirdPerson()
         PlayerRef.SetDontMove(False)   ; release the player pin (we pinned instead of ghosting)
+        PlayerRef.SetRestrained(False)
+        ; OStim sets this for player scenes; a scene that got force-stopped mid-thread (or refused)
+        ; strands it, and nothing else clears it — the reported "can't attack + camera off" combo.
+        Game.SetPlayerAIDriven(False)
     EndIf
     Game.EnablePlayerControls()
-    Debug.Trace("[SNBaka] CleanupPair: player controls re-enabled (bSkipA2Reset=" + bSkipA2Reset + ")")
-    Utility.Wait(0.1)
-    Debug.SendAnimationEvent(akA1, "IdleForceDefaultState")
-    If !bSkipA2Reset
-        Debug.SendAnimationEvent(akA2, "IdleForceDefaultState")
-    EndIf
-    Utility.Wait(0.2)
-
-    akA1.EvaluatePackage()
-    If !bSkipA2Reset
-        akA2.EvaluatePackage()
-    EndIf
+    _Log("[SNBaka] CleanupPair: player controls re-enabled (bSkipA2Reset=" + bSkipA2Reset + ")")
 
     _StopTears(akA2)
+
+    ; Reset the hard auto-get-up ceiling to the full duration for whichever of the pair is STILL down
+    ; once this paired animation ends -- being actively engaged with (win or lose, Struggle/ChokeHug/
+    ; Inspect/Escalate/CreatureEscalate, all of them route through here) means the clock isn't why
+    ; they're still down, so it shouldn't get to expire out from under them mid-scene. Single, central
+    ; hook: every paired interaction in this file ends at _CleanupPair, so nothing needs its own
+    ; special-cased reset call. _IsDownedAny, not a bare OnGround check -- an Acheron-held victim has
+    ; SNAcheron.Held=1 with OnGround=0, and the OnGround-only version of this check silently skipped
+    ; exactly the actors the reset exists for.
+    If _IsDownedAny(akA1)
+        StorageUtil.SetFloatValue(akA1, "SNBaka.AutoGetUpDeadlineRT", Utility.GetCurrentRealTime() + StorageUtil.GetFloatValue(PlayerRef, "SNAcheron.AutoGetUpSeconds", 600.0))
+    EndIf
+    If _IsDownedAny(akA2)
+        StorageUtil.SetFloatValue(akA2, "SNBaka.AutoGetUpDeadlineRT", Utility.GetCurrentRealTime() + StorageUtil.GetFloatValue(PlayerRef, "SNAcheron.AutoGetUpSeconds", 600.0))
+    EndIf
 
     If marker1
         marker1.Delete()
     EndIf
     If marker2
         marker2.Delete()
+    EndIf
+EndFunction
+
+; The MERCY window: hold (or re-apply) the victim's ghost for fEscapeGraceDuration seconds at every
+; exit from the protected interaction pipeline -- a won struggle OR the end of a sex scene -- so
+; nobody gets spawn-killed the exact frame the protection drops (confirmed from testing: a third
+; falmer attacked the player the second their won struggle finished). Deliberately BLOCKING -- the
+; calling thread is this encounter's own worker, and holding it here also keeps whatever locks/
+; cooldowns/re-downs follow from firing until the mercy ends. Ghost blocks incoming hits only; the
+; victim can still fight, flee, or loot during the window.
+Function _PostEscapeGrace(Actor akWinner)
+    If !akWinner
+        Return
+    EndIf
+    If fEscapeGraceDuration <= 0.0
+        akWinner.SetGhost(False)   ; callers rely on this function ending the ghost either way
+        _ReleaseAcheronPacify(akWinner)
+        Return
+    EndIf
+    akWinner.SetGhost(True)
+    _Log("[SNBaka] _PostEscapeGrace: " + akWinner.GetDisplayName() + " untouchable for " + fEscapeGraceDuration + "s of mercy")
+    Utility.Wait(fEscapeGraceDuration)
+    akWinner.SetGhost(False)
+    ; This is the ONE place the struggle/scene-scoped two-way pacify (_SetupPair / the scene paths)
+    ; ends for a victim who walks free — after the mercy window, never mid-transition. A victim who is
+    ; re-downed instead never comes through here un-defeated, so their pacify carries straight into
+    ; Acheron's own defeat state with no targetable gap (the "3 falmers re-targeted the player between
+    ; struggle and scene" report). Recovery paths end it via _ClearAcheronHold instead.
+    _ReleaseAcheronPacify(akWinner)
+    _Log("[SNBaka] _PostEscapeGrace: ended for " + akWinner.GetDisplayName())
+EndFunction
+
+; Release Acheron's two-way pacify, but never strip it from an actor Acheron currently holds
+; DEFEATED (a defeated actor is always pacified — that protection belongs to the down state).
+Function _ReleaseAcheronPacify(Actor ak)
+    If ak && StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Present", 0) == 1 && !Acheron.IsDefeated(ak)
+        Acheron.ReleaseActor(ak)
     EndIf
 EndFunction
 
@@ -2076,9 +2653,9 @@ EndFunction
 ; seconds. During that window the attacker is free; if Escalate_Execute fires,
 ; _DoEscalation runs. Otherwise the victim is released and a cooldown starts.
 Function _DefeatGroundWindow(Actor akA1, Actor akA2)
-    Debug.Trace("[SNBaka] _DefeatGroundWindow: attacker=" + akA1.GetDisplayName() + " victim=" + akA2.GetDisplayName() + " window=" + fEscalationWindow)
+    _Log("[SNBaka] _DefeatGroundWindow: attacker=" + akA1.GetDisplayName() + " victim=" + akA2.GetDisplayName() + " window=" + fEscalationWindow)
     If !akA2 || akA2.IsDead()
-        Debug.Trace("[SNBaka] _DefeatGroundWindow: victim already dead/None — aborting")
+        _Log("[SNBaka] _DefeatGroundWindow: victim already dead/None — aborting")
         StorageUtil.SetIntValue(akA2, "SNBaka.Locked",        0)
         StorageUtil.SetIntValue(akA2, "SNBaka.StopRequested", 0)
         _StartCooldown(akA1)
@@ -2086,21 +2663,25 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
     EndIf
 
     ; DELEGATE to Acheron when present: it OWNS the downed state (hold + calm + recover + "X is downed"
-    ; cues), so we just hand the NPC victim over and step out. The acheron_downed cue then drives the
-    ; next action (Rescue / Escalate-when-clear / etc.). Only run the fallback window below when Acheron
-    ; is absent. (Player Baka-downs keep the fallback; player COMBAT defeats are already the bridge's.)
-    If akA2 != PlayerRef && _DelegateDownToAcheron(akA2)
+    ; cues), so we just hand the victim over and step out. The acheron_downed cue then drives the next
+    ; action (Rescue / Escalate-when-clear / etc.). This now includes the PLAYER -- explicit spec: a
+    ; defeated player must stay down until the get-up key, help, or a won QTE, exactly like a combat
+    ; defeat; the old player-only local window below auto-released them after fEscalationWindow, which
+    ; is an unsanctioned self-recovery. The fallback window below only runs when Acheron is absent
+    ; (Baka standalone), where the timed release is BY DESIGN the only recovery system there is.
+    If _DelegateDownToAcheron(akA2)
         _UnlockAttackerOnly(akA1)
         StorageUtil.SetIntValue(akA2, "SNBaka.Locked",        0)
         StorageUtil.SetIntValue(akA2, "SNBaka.OnGround",      0)
         StorageUtil.SetStringValue(akA2, "SNBaka.DownPose",   "")
+        StorageUtil.SetFormValue(akA2, "SNBaka.GroundWindowAggressor", None)
         _StartCooldown(akA1)
-        Debug.Trace("[SNBaka] _DefeatGroundWindow: delegated downed state to Acheron for " + akA2.GetDisplayName())
+        _Log("[SNBaka] _DefeatGroundWindow: delegated downed state to Acheron for " + akA2.GetDisplayName())
         Return
     EndIf
 
     Bool a2IsPlayer = (akA2 == PlayerRef)
-    Debug.Trace("[SNBaka] _DefeatGroundWindow: victim isPlayer=" + a2IsPlayer)
+    _Log("[SNBaka] _DefeatGroundWindow: victim isPlayer=" + a2IsPlayer)
     If a2IsPlayer
         Game.DisablePlayerControls(True, True, False, False, True, False, False, False)
         ; (No SetDontMove on the player — it locked the camera. The NPC is ghosted so it can't
@@ -2120,9 +2701,14 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
     ; Set OnGround=1 immediately so Interact_ShowMenu's downed-menu shortcut can detect
     ; the downed victim as soon as the attacker's lock is released (before _Bleedout).
     StorageUtil.SetIntValue(akA2, "SNBaka.OnGround", 1)
-    Debug.Trace("[SNBaka] _DefeatGroundWindow: OnGround=1 (early — downed menu ready)")
+    ; Records WHO owns this window, so LockBoth can let THIS SAME aggressor's follow-up actions
+    ; (PinHelpless/GropeHelpless/etc. — see LockBoth) through despite the victim being locked for the
+    ; window's duration, instead of silently bouncing off IsActorLocked like every other caller.
+    StorageUtil.SetFormValue(akA2, "SNBaka.GroundWindowAggressor", akA1)
+    _ForceEssentialForDown(akA2, True)
+    _Log("[SNBaka] _DefeatGroundWindow: OnGround=1 (early — downed menu ready)")
     _Bleedout(akA2, akA1)
-    Debug.Trace("[SNBaka] _DefeatGroundWindow: bleedout on " + akA2.GetDisplayName())
+    _Log("[SNBaka] _DefeatGroundWindow: bleedout on " + akA2.GetDisplayName())
     _StartTears(akA2)
     Utility.Wait(0.5)
     If !a2IsPlayer
@@ -2133,19 +2719,19 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
         ; DoNothing AI for the duration; original aggression restored on release.
         _PacifyActor(akA2, True)
         _HoldActorAI(akA2, True)
-        Debug.Trace("[SNBaka] _DefeatGroundWindow: Restrained+DontMove+pacified on NPC victim")
+        _Log("[SNBaka] _DefeatGroundWindow: Restrained+DontMove+pacified on NPC victim")
     EndIf
     If _bDruggedEscalation
-        Debug.Notification(akA2.GetDisplayName() + " collapses, unconscious.")
+        _Notify(akA2.GetDisplayName() + " collapses, unconscious.")
     ElseIf akA1 == PlayerRef
         ; Player is the one standing over the defeated NPC — the decision is theirs.
-        Debug.Notification("What will you do to " + akA2.GetDisplayName() + "?")
+        _Notify("What will you do to " + akA2.GetDisplayName() + "?")
     ElseIf akA2 == PlayerRef
         ; NPC is standing over the player.
-        Debug.Notification(akA1.GetDisplayName() + " stands over you. What will they do?")
+        _Notify(akA1.GetDisplayName() + " stands over you. What will they do?")
     Else
         ; NPC over NPC — the player is just witnessing.
-        Debug.Notification(akA1.GetDisplayName() + " stands over " + akA2.GetDisplayName() + ".")
+        _Notify(akA1.GetDisplayName() + " stands over " + akA2.GetDisplayName() + ".")
     EndIf
 
     ; 1-second settle: lets the down pose stabilise and flushes any stale Escalate_Execute
@@ -2153,7 +2739,7 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
     Utility.Wait(1.0)
     ; (Flags were already cleared at the top, before OnGround=1 — do NOT clear them again here,
     ; or a downed-menu pick made during this settle would be lost.)
-    Debug.Trace("[SNBaka] _DefeatGroundWindow: escalate window open (" + fEscalationWindow + "s)")
+    _Log("[SNBaka] _DefeatGroundWindow: escalate window open (" + fEscalationWindow + "s)")
     If _bDruggedEscalation
         SkyrimNetApi.RegisterEvent("baka_defeat", \
             akA2.GetDisplayName() + " is unconscious — drugged by " + akA1.GetDisplayName() + ". " + \
@@ -2163,12 +2749,13 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
             akA1, akA2)
     Else
         ; This is the LOCKED ground window: the victim is pinned, so aggressive acts like grope/choke/
-        ; struggle (which call LockBoth) would silently fail here — don't offer them. Rape and HelpUp both
-        ; work (HelpUp calls _ForceRecover directly, no lock needed), same as Release.
+        ; struggle (which call LockBoth) would silently fail here — don't offer them. Escalate and HelpUp
+        ; both work (HelpUp calls _ForceRecover directly, no lock needed), same as Release.
         SkyrimNetApi.RegisterEvent("baka_defeat", \
             akA2.GetDisplayName() + " is beaten down and pinned, helpless at " + akA1.GetDisplayName() + "'s feet. " + \
-            akA1.GetDisplayName() + " decides NOW and carries it out (use the action, don't just describe it) " + \
-            "— exactly ONE of: Rape (force them into sex; use the Rape action — never StartNewSex), " + \
+            akA1.GetDisplayName() + " can talk to them — interrogate, threaten, mock, demand their surrender " + \
+            "or belongings — but must still decide NOW and carry it out (use the action, don't just describe it) " + \
+            "— exactly ONE of: Escalate (force them into sex; use the Escalate action — never StartNewSex), " + \
             "HelpUp (show mercy, stand them up), or Release (step back, let the moment pass). " + \
             "Pick ONE and do it now. " + akA2.GetDisplayName() + " reacts. One beat.", \
             akA1, akA2)
@@ -2207,7 +2794,7 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
             ; and protected.
             _bResetDownWindow = False
             elapsed = 0.0
-            Debug.Trace("[SNBaka] _DefeatGroundWindow: down timer reset by interaction")
+            _Log("[SNBaka] _DefeatGroundWindow: down timer reset by interaction")
         EndIf
         If sinceHold >= 3.0 && !sceneTookOver
             ; Re-assert the SAME cached down pose so the engine/AI can't reclaim the actor and
@@ -2230,14 +2817,32 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
             _CueDecisionIfDowned(akA1, akA2, False)   ; passive reminder — do NOT reset the recovery clock
         EndIf
         If _bEscalateRequested
-            escalated = True
-            Debug.Trace("[SNBaka] _DefeatGroundWindow: escalate requested at t=" + elapsed)
+            _bEscalateRequested = False
+            ; _DoEscalation itself also gates on this (every escalation path funnels through it), but by
+            ; the time it runs here the victim has ALREADY been unconditionally _Recover()'d a few lines
+            ; below (stood up) regardless of what _DoEscalation decides — so its own "victim stays down"
+            ; comment was being silently broken: a combat-blocked escalate stood the victim up with no
+            ; way to retry (Escalate_Execute requires OnGround, which _Recover just cleared). Confirmed
+            ; from a live log: Escalate accepted -> _Recover -> _DoEscalation blocked (combat near) ->
+            ; retry a few seconds later rejected with "target not downed". Check here, BEFORE recovering,
+            ; so a blocked escalate leaves the victim down and the window still running, exactly like the
+            ; request was never made — same as _DoEscalation's other two callers, which never recover
+            ; the victim ahead of time and simply hit the same gate the moment they call it.
+            If _CombatNear(akA2, fCombatOverRadius)
+                _Log("[SNBaka] _DefeatGroundWindow: escalate requested but combat still near — victim stays down, window keeps running")
+                SkyrimNetApi.RegisterEvent("baka_escalate", \
+                    akA1.GetDisplayName() + " stands over the beaten " + akA2.GetDisplayName() + " — but the fight is not over yet. Finish it first, then they can be taken.", \
+                    akA1, akA2)
+            Else
+                escalated = True
+                _Log("[SNBaka] _DefeatGroundWindow: escalate requested at t=" + elapsed)
+            EndIf
         ElseIf _iDownedReplay > 0
             ; Downed-menu Investigate/Inspect: play the inspection anim through (no QTE),
             ; re-down the victim, and reset the window timer so they stay defeated.
             Int replayWhich = _iDownedReplay
             _iDownedReplay = 0
-            Debug.Trace("[SNBaka] _DefeatGroundWindow: downed replay " + replayWhich + " at t=" + elapsed)
+            _Log("[SNBaka] _DefeatGroundWindow: downed replay " + replayWhich + " at t=" + elapsed)
             _DownedReplay(akA1, akA2, replayWhich)
             ; Only NPC victims get the window timer reset here. The PLAYER isn't reset by the replay
             ; itself, but an aggressor close enough to inspect them is also close enough to trip the
@@ -2245,9 +2850,9 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
             ; doesn't leave the player any less protected, it just avoids a redundant reset.
             If !a2IsPlayer
                 elapsed = 0.0
-                Debug.Trace("[SNBaka] _DefeatGroundWindow: replay done — window timer reset, NPC victim still down")
+                _Log("[SNBaka] _DefeatGroundWindow: replay done — window timer reset, NPC victim still down")
             Else
-                Debug.Trace("[SNBaka] _DefeatGroundWindow: replay done — PLAYER victim")
+                _Log("[SNBaka] _DefeatGroundWindow: replay done — PLAYER victim")
             EndIf
         EndIf
     EndWhile
@@ -2260,13 +2865,14 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
         StorageUtil.SetStringValue(akA2, "SNBaka.DownPose",   "")
         StorageUtil.SetIntValue(akA2, "SNBaka.StopRequested", 0)
         StorageUtil.SetIntValue(akA2, "SNBaka.Locked",        0)
+        StorageUtil.SetFormValue(akA2, "SNBaka.GroundWindowAggressor", None)
         If !a2IsPlayer
             _HoldActorAI(akA2, False)
         EndIf
         _bEscalateRequested = False
         _bReleaseRequested  = False
         _bStandBack         = False
-        Debug.Trace("[SNBaka] _DefeatGroundWindow: a sex scene took over -> standing down WITHOUT recovery")
+        _Log("[SNBaka] _DefeatGroundWindow: a sex scene took over -> standing down WITHOUT recovery")
         _StartCooldown(akA1)
         Return
     EndIf
@@ -2275,28 +2881,29 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
     _bStandBack    = False
     Bool released = _bReleaseRequested
     If released
-        Debug.Trace("[SNBaka] _DefeatGroundWindow: release requested at t=" + elapsed + " — freeing victim early")
+        _Log("[SNBaka] _DefeatGroundWindow: release requested at t=" + elapsed + " — freeing victim early")
     EndIf
     _bEscalateRequested = False
     _bReleaseRequested  = False
 
     If escalated
-        Debug.Notification(akA1.GetDisplayName() + " makes their move.")
+        _Notify(akA1.GetDisplayName() + " makes their move.")
     ElseIf standBack
-        Debug.Notification(akA1.GetDisplayName() + " stands back; " + akA2.GetDisplayName() + " staggers to their feet.")
+        _Notify(akA1.GetDisplayName() + " stands back; " + akA2.GetDisplayName() + " staggers to their feet.")
     ElseIf released
-        Debug.Notification(akA1.GetDisplayName() + " steps back and lets you go.")
+        _Notify(akA1.GetDisplayName() + " steps back and lets you go.")
     Else
-        Debug.Notification(akA1.GetDisplayName() + " backs away.")
+        _Notify(akA1.GetDisplayName() + " backs away.")
     EndIf
     StorageUtil.SetIntValue(akA2, "SNBaka.OnGround", 0)
+    StorageUtil.SetFormValue(akA2, "SNBaka.GroundWindowAggressor", None)
     akA2.SetRestrained(False)
     akA2.SetDontMove(False)
     If !a2IsPlayer
         _PacifyActor(akA2, False)
         _HoldActorAI(akA2, False)
     EndIf
-    Debug.Trace("[SNBaka] _DefeatGroundWindow: OnGround=0. escalated=" + escalated)
+    _Log("[SNBaka] _DefeatGroundWindow: OnGround=0. escalated=" + escalated)
 
     If standBack
         ; Stand Back: a visible stagger as they scramble up, then the normal recover/stand.
@@ -2309,14 +2916,14 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
     If a2IsPlayer && !escalated
         Game.EnablePlayerControls()
         Debug.SendAnimationEvent(akA2, "IdleForceDefaultState")
-        Debug.Trace("[SNBaka] _DefeatGroundWindow: player controls re-enabled")
+        _Log("[SNBaka] _DefeatGroundWindow: player controls re-enabled")
     EndIf
 
     If escalated
-        Debug.Trace("[SNBaka] _DefeatGroundWindow: escalating to _DoEscalation")
+        _Log("[SNBaka] _DefeatGroundWindow: escalating to _DoEscalation")
         _DoEscalation(akA1, akA2)
     Else
-        Debug.Trace("[SNBaka] _DefeatGroundWindow: window expired without escalation")
+        _Log("[SNBaka] _DefeatGroundWindow: window expired without escalation")
         StorageUtil.SetIntValue(akA2, "SNBaka.Locked",        0)
         StorageUtil.SetIntValue(akA2, "SNBaka.StopRequested", 0)
         _CueOutcome("baka_forced", \
@@ -2348,7 +2955,7 @@ Int Function _ResolveSexBackend(Int aiPref = -1)
         EndIf
     EndIf
     If b == 1 && !hasSL
-        Debug.Trace("[SNBaka] _ResolveSexBackend: SexLab selected but not installed — falling back to OStim")
+        _Log("[SNBaka] _ResolveSexBackend: SexLab selected but not installed — falling back to OStim")
         b = 2
     EndIf
     Return b
@@ -2369,6 +2976,27 @@ EndFunction
 Int Function _StartSexScene(Actor[] akActors, Actor akVictim, Actor akAggressor, String position, String intensity, Int aiBackend = -1)
     Int backend = _ResolveSexBackend(aiBackend)
     Int tid = -1
+    ; FINAL combat gate, at the single choke point every scene start funnels through: if the PLAYER is
+    ; among the actors and any combat is still live on or near them, REFUSE to start -- OStim CTDs
+    ; (confirmed repeatedly) when its thread spins up while the player is in combat, and every earlier
+    ; gate leaves a prep window where a fight can re-flare after the check. Over-blocking is the safe
+    ; direction here: a refused scene falls through to each caller's existing no-scene handling (their
+    ; wait loops see no animation and re-down the victim), and the retry pipeline gets another shot
+    ; once things settle. IsInCombat() alone can be a stale alarm flag, but for a CTD guard a false
+    ; positive just means "try again later" -- acceptable.
+    Int gi = 0
+    While gi < akActors.Length
+        ; _CombatNear only — deliberately NOT PlayerRef.IsInCombat(): the player's own combat flag
+        ; reflects OTHERS holding them in a combat list and lingers long after every attacker has been
+        ; AI-held/lock-cleared ("after StopCombat(): IsInCombat()=TRUE" in the log). Gating on it
+        ; refused every post-QTE scene — the reported escalate/refuse/re-down loop. Real combatants
+        ; actively fighting near the player (the actual OStim hazard) is what _CombatNear measures.
+        If akActors[gi] == PlayerRef && _CombatNear(PlayerRef, fCombatOverRadius)
+            _Log("[SNBaka] _StartSexScene: REFUSED — player is in the scene with combat still live (CTD guard)")
+            Return -1
+        EndIf
+        gi += 1
+    EndWhile
     ; A defeat/aggressive scene runs far longer than the down/grab anims, so a calm cast earlier in the
     ; encounter may have lapsed — re-cast it for a fresh full duration so combat can't re-ignite under the
     ; scene. ONLY for participants who are actually IN COMBAT: a peaceful/consensual scene (e.g. two NPCs
@@ -2384,7 +3012,7 @@ Int Function _StartSexScene(Actor[] akActors, Actor akVictim, Actor akAggressor,
     EndIf
     If backend == 1
         tid = SkyrimNet_BakaSL.StartScene(akActors, akVictim, akAggressor, position, intensity)
-        Debug.Trace("[SNBaka] _StartSexScene: SexLab tid=" + tid + " pos='" + position + "' int='" + intensity + "'")
+        _Log("[SNBaka] _StartSexScene: SexLab tid=" + tid + " pos='" + position + "' int='" + intensity + "'")
     ElseIf backend == 2
         ; OStim. Instead of relying on OStim's default pick, we ask OStim's library for a scene that
         ; fits these actors and pin it as the starting animation. For aggressive escalation that pulls
@@ -2392,7 +3020,7 @@ Int Function _StartSexScene(Actor[] akActors, Actor akVictim, Actor akAggressor,
         ; actor array is [creature, victim]. Aggressor = dominant so OStim assigns roles correctly.
         Int bid = OThreadBuilder.Create(akActors)
         If bid < 0
-            Debug.Trace("[SNBaka] _StartSexScene: OStim Create failed (invalid actor)")
+            _Log("[SNBaka] _StartSexScene: OStim Create failed (invalid actor)")
             Return -1
         EndIf
         OThreadBuilder.NoFurniture(bid)
@@ -2402,7 +3030,23 @@ Int Function _StartSexScene(Actor[] akActors, Actor akVictim, Actor akAggressor,
             OThreadBuilder.SetDominantActors(bid, doms)
         EndIf
         String sceneId = _PickOStimScene(akActors, intensity)
-        If sceneId != ""
+        If sceneId == ""
+            ; CREATURE scenes only start when we can PIN a matching animation — OStim's default pick
+            ; can't resolve creature combos, so an empty pick means "no animation installed for this
+            ; pairing" (confirmed live: giant scenes started with scene='' and died instantly, burning
+            ; the whole prep cycle and exposing the AlignMenu null-thread crash). Refuse instead; the
+            ; caller's no-scene unwind re-downs the victim and resets the creature cleanly. Human
+            ; scenes keep OStim's default pick.
+            Int ci = 0
+            While ci < akActors.Length
+                If akActors[ci] && _CreatureAnimKey(akActors[ci]) != ""
+                    _Log("[SNBaka] _StartSexScene: REFUSED — no OStim animation found for this creature combination (an animation pack covering it, e.g. Billyy's, is not installed)")
+                    OThreadBuilder.Cancel(bid)
+                    Return -1
+                EndIf
+                ci += 1
+            EndWhile
+        Else
             OThreadBuilder.SetStartingAnimation(bid, sceneId)
         EndIf
         String meta = position
@@ -2419,14 +3063,41 @@ Int Function _StartSexScene(Actor[] akActors, Actor akVictim, Actor akAggressor,
         If tid < 0
             OThreadBuilder.Cancel(bid)        ; start failed — free the builder id so it isn't leaked
         EndIf
-        Debug.Trace("[SNBaka] _StartSexScene: OStim tid=" + tid + " scene='" + sceneId + "' pos='" + position + "' int='" + intensity + "'")
+        _Log("[SNBaka] _StartSexScene: OStim tid=" + tid + " scene='" + sceneId + "' pos='" + position + "' int='" + intensity + "'")
     Else
-        Debug.Trace("[SNBaka] _StartSexScene: no sex framework available — scene skipped.")
+        _Log("[SNBaka] _StartSexScene: no sex framework available — scene skipped.")
     EndIf
     If tid >= 0 && akVictim
         _ApplySexTears(akVictim)
+        ; Stashed so a later hit/combat check (see the scene-wait loops in _EscalationCleanup and
+        ; _DoCreatureEscalation) can force-stop THIS specific running scene without needing every
+        ; caller to thread tid/backend through as extra parameters.
+        StorageUtil.SetIntValue(akVictim, "SNBaka.SceneTid", tid)
+        StorageUtil.SetIntValue(akVictim, "SNBaka.SceneBackend", backend)
     EndIf
     Return tid
+EndFunction
+
+; A hit on either animating actor (accidental or not) must stop the scene right now, not just wait for
+; it to end -- OStim in particular crashes (confirmed via CrashLoggerSSE, null actor alignment inside
+; OStim's AlignMenu) if combat resettles while its own thread is still running. Reads the tid/backend
+; _StartSexScene stashed on the victim; no-op if none is running.
+Function _StopSexScene(Actor akVictim)
+    If !akVictim
+        Return
+    EndIf
+    Int tid = StorageUtil.GetIntValue(akVictim, "SNBaka.SceneTid", -1)
+    If tid < 0
+        Return
+    EndIf
+    Int backend = StorageUtil.GetIntValue(akVictim, "SNBaka.SceneBackend", 0)
+    _Log("[SNBaka] _StopSexScene: force-stopping tid=" + tid + " backend=" + backend + " for " + akVictim.GetDisplayName())
+    If backend == 1
+        SkyrimNet_BakaSL.StopScene(tid)
+    ElseIf backend == 2
+        OThread.Stop(tid)
+    EndIf
+    StorageUtil.SetIntValue(akVictim, "SNBaka.SceneTid", -1)
 EndFunction
 
 ; Ask OStim's library for a scene that fits these actors. For aggressive escalation we first try
@@ -2474,18 +3145,35 @@ EndFunction
 ; Plays the strangle animation on the downed victim, then starts an aggressive scene.
 ; No second QTE — escalation goes directly to the configured sex framework.
 Function _DoEscalation(Actor akA1, Actor akA2)
+    ; Every HUMAN escalation path funnels here -- Escalate_Execute's "ours" branch (via the ground
+    ; window's own loop), its "external" branch, and _DispatchDownedAction's external branch (the
+    ; PrismaUI downed-menu AND AcheronNG's native Hunter's Pride menu both call that) -- so this one
+    ; function is the actual shared gate for all of them. (Creature escalation does NOT go through
+    ; here -- _DoCreatureEscalation calls _StartSexScene directly.)
+    If _IsCreatureActor(akA1) || _IsCreatureActor(akA2)
+        _Log("[SNBaka] _DoEscalation: blocked — creature actor")
+        Return
+    EndIf
+    ; _TargetSexAllowed is a content-PREFERENCE filter (what should the LLM/an NPC be allowed to pick),
+    ; not a technical constraint -- so, same precedent as bNPCCanEscalate below, it only gates a
+    ; non-player initiator. The player pressing Hunter's Pride (or the PrismaUI menu) on a specific
+    ; target, including a male one with iTargetSex set to female-only, is their own deliberate choice
+    ; and shouldn't be second-guessed here.
+    If akA1 != PlayerRef && !_TargetSexAllowed(akA2)
+        _Log("[SNBaka] _DoEscalation: blocked — target sex not allowed by MCM")
+        Return
+    EndIf
     ; ESCALATION IS THE ONLY COMBAT-GATED STEP. Forced sex (the OStim scene) is unstable mid-combat, so
     ; we NEVER start it while a fight is still going on near the victim. The victim stays down; the LLM is
-    ; told to finish the fight first, and can escalate once it's over. Every escalation path funnels here
-    ; (human Escalate, external down, creature), so this one gate covers them all.
+    ; told to finish the fight first, and can escalate once it's over.
     If _CombatNear(akA2, fCombatOverRadius)
-        Debug.Trace("[SNBaka] _DoEscalation: blocked — combat still ongoing nearby; deferring sex")
+        _Log("[SNBaka] _DoEscalation: blocked — combat still ongoing nearby; deferring sex")
         SkyrimNetApi.RegisterEvent("baka_escalate", \
             akA1.GetDisplayName() + " stands over the beaten " + akA2.GetDisplayName() + " — but the fight is not over yet. Finish it first, then they can be taken.", \
             akA1, akA2)
         Return
     EndIf
-    Debug.Trace("[SNBaka] _DoEscalation: A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName())
+    _Log("[SNBaka] _DoEscalation: A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName())
     ; Lock BOTH — not just the attacker. The victim must be Locked too, or (when the victim is the
     ; player) Downed_SkyrimNet keeps running its hold/recovery/creature-retry THROUGH the sex scene and
     ; fires the down pose into it, breaking the animation.
@@ -2520,6 +3208,10 @@ Function _DoEscalation(Actor akA1, Actor akA2)
     ; Pacify both NPCs so the victim can't draw a weapon / fight back mid-animation. Restored in cleanup.
     _PacifyActor(akA1, True)
     _PacifyActor(akA2, True)
+    ; Same two-way protection _SetupPair gives its victims — this inline setup predates that upgrade:
+    ; _PacifyActor only stops the VICTIM fighting; Acheron's pacify stops everyone else TARGETING them
+    ; ("ignoring & ignored"). Ends via _PostEscapeGrace or a real recovery, same lifecycle as everywhere.
+    _ProtectVictimTargeting(akA2)
     ; Height-matching via Actor.SetScale was REMOVED — it caused runaway scaling (refActor's
     ; scale was never restored, so actors snowballed bigger) and a CTD scare, for marginal gain.
     ; Offsets are what looks best. If revisited, use a controlled NiOverride node-scale, not SetScale.
@@ -2548,7 +3240,7 @@ Function _DoEscalation(Actor akA1, Actor akA2)
     akA1.SetPosition(akA1.GetPositionX(), akA1.GetPositionY(), akA2.GetPositionZ() + oz)
     akA1.SetAngle(0.0, 0.0, angZ + orot)
     akA2.SetAngle(0.0, 0.0, angZ)
-    Debug.Trace("[SNBaka] _DoEscalation: A1 snapped to (" + akA1.GetPositionX() + "," + akA1.GetPositionY() + ") angle=" + (angZ + orot))
+    _Log("[SNBaka] _DoEscalation: A1 snapped to (" + akA1.GetPositionX() + "," + akA1.GetPositionY() + ") angle=" + (angZ + orot))
     _LogPair("Escalation", akA1, akA2, ox, oy, orot, angZ + orot)
 
     ; Roles: A1 (attacker) plays A2_S1 (crouching straddler), A2 (victim) plays A1_S1 (downed).
@@ -2564,13 +3256,13 @@ Function _DoEscalation(Actor akA1, Actor akA2)
 
     _StartTears(akA2)
 
-    Debug.Trace("[SNBaka] _DoEscalation: SexLab installed=" + SkyrimNet_BakaSL.Installed() + " drugged=" + _bDruggedEscalation)
+    _Log("[SNBaka] _DoEscalation: SexLab installed=" + SkyrimNet_BakaSL.Installed() + " drugged=" + _bDruggedEscalation)
 
     ; ── Player involved: open our PrismaUI encounter wizard (async).  The scene
     ; is started in _StartSexLabScene when the player finishes; cleanup happens
     ; there too.  No SkyrimNet_SexLab dependency. ─────────────────────────────
     If (a1IsPlayer || a2IsPlayer) && SNBakaUI.IsAvailable()
-        Debug.Trace("[SNBaka] _DoEscalation: opening PrismaUI encounter wizard")
+        _Log("[SNBaka] _DoEscalation: opening PrismaUI encounter wizard")
         ; The Interact menu pauses correctly because it opens from normal gameplay.
         ; Here the player is still under DisablePlayerControls from the choke, which
         ; stops PrismaUI's menu-pause from engaging.  Return control to a clean state
@@ -2587,7 +3279,7 @@ Function _DoEscalation(Actor akA1, Actor akA2)
     ; Escalation is always a non-consensual overpower -> aggressive tone, any position.
     Int sceneTid = _StartSexScene(sexActors, akA2, akA1, "", "aggressive")
     If sceneTid < 0
-        Debug.Trace("[SNBaka] _DoEscalation: WARNING — scene failed to start (tid=" + sceneTid + "); narrating anyway, cleanup will run immediately (IsInSexAnimation will read false)")
+        _Log("[SNBaka] _DoEscalation: WARNING — scene failed to start (tid=" + sceneTid + "); narrating anyway, cleanup will run immediately (IsInSexAnimation will read false)")
     EndIf
     String npcNarr = akA1.GetDisplayName() + " overpowers " + akA2.GetDisplayName() + "."
     If _bDruggedEscalation
@@ -2597,7 +3289,7 @@ Function _DoEscalation(Actor akA1, Actor akA2)
     EndIf
     ; NPC-NPC scene: tell the LLM and show the player what's happening to whom.
     SkyrimNetApi.RegisterEvent("baka_sexlab_trigger", npcNarr, akA1, akA2)
-    Debug.Notification(npcNarr)
+    _Notify(npcNarr)
     _EscalationCleanup(akA1, akA2)
 EndFunction
 
@@ -2611,48 +3303,104 @@ Function _EscalationCleanup(Actor akA1, Actor akA2)
     ; early let Acheron start trying to manage/recover the same actor SexLab/OStim was still animating —
     ; two systems fighting over one actor mid-scene, a classic crash vector. Wait for the scene to
     ; actually be over (poll the same faction check IsEligible/etc. already use) before touching anything.
-    Debug.Trace("[SNBaka] _EscalationCleanup: waiting for scene to end. A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName())
+    _Log("[SNBaka] _EscalationCleanup: waiting for scene to end. A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName())
+    ; Same nearby-teammate protection as PlayPairedSequence's own struggle phase, extended through the
+    ; actual sex scene too — a downed/occupied actor is vulnerable to being "executed" by an unrelated
+    ; mod's own AI-driven action for this whole window, not just during the preceding struggle.
+    _ProtectNearbyAllies(akA2, akA1, True)
+    ; The VICTIM is untouchable for the scene's whole duration, same rule as the struggle phase
+    ; (_SetupPair now ghosts both participants): the aggressor's own faction allies won't kill its
+    ; prey — a stray ally hit whiffs instead of staggering the animation or feeding OStim a combat
+    ; transition mid-thread. The AGGRESSOR stays hittable on purpose: a genuine hit on IT (a rescuer
+    ; interceding) is exactly what's allowed to break the scene, per the abort rule below.
+    akA2.SetGhost(True)
+    ; Ghost stops hits LANDING; Acheron's pacify makes combat IGNORE her outright (same mechanism its
+    ; own defeat state uses — "the others stop attacking downed characters"), so attackers drop her as
+    ; a target instead of whiffing at her for the whole scene. Scene-scoped: released after the loop.
+    _ProtectVictimTargeting(akA2)
     Utility.Wait(2.0)   ; grace period: SexLab/OStim need a moment to add the actors to the scene faction
     Int waited = 0
-    While IsInSexAnimation(akA2) && waited < 3600   ; ~1h hard cap so a stuck faction flag can't wedge us
-        Utility.Wait(2.0)
-        waited += 2
+    Bool sceneCut = False
+    ; Force-stop the scene only when a REAL fight reaches the aggressor -- OStim crashes (confirmed
+    ; CrashLoggerSSE, null actor alignment inside OStim's AlignMenu) if combat resettles while its own
+    ; thread is running. Same refined rule as _ShouldAbort: combat STATE alone (the aggressor's faction
+    ; alarm reacting to its ally attacking this very victim) doesn't count; only a live, non-downed
+    ; combat target OTHER than the scene's own victim does -- that's what a genuine interceding hit
+    ; produces (the aggressor's target switches to whoever hit it). The victim side isn't checked at
+    ; all anymore: they're ghosted above, nothing can land on them.
+    While IsInSexAnimation(akA2) && waited < 900 && !sceneCut   ; 15min hard cap (audit: a stuck faction flag pinned a VM thread for up to an hour)
+        Actor a1t = akA1.GetCombatTarget()
+        If akA1.IsInCombat() && a1t && a1t != akA2 && !a1t.IsDead() && !a1t.IsDisabled() && !_IsDownedAny(a1t)
+            _Log("[SNBaka] _EscalationCleanup: " + akA1.GetDisplayName() + " is in a real fight against " + a1t.GetDisplayName() + " mid-scene — force-stopping")
+            _StopSexScene(akA2)
+            sceneCut = True
+        Else
+            Utility.Wait(1.0)
+            waited += 1
+        EndIf
     EndWhile
-    If waited >= 3600
-        Debug.Trace("[SNBaka] _EscalationCleanup: WARNING — hit the 1h hard cap still IsInSexAnimation=true; proceeding anyway (stuck scene faction?)")
+    _ProtectNearbyAllies(akA2, akA1, False)
+    If akA2
+        ; Scene over: hold the ghost a few MERCY seconds more before dropping it (no spawn-kills the
+        ; frame the protection ends), THEN release the scene-scoped pacify.
+        _PostEscapeGrace(akA2)
+        If StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Present", 0) == 1
+            Acheron.ReleaseActor(akA2)   ; end the scene-scoped pacify; the captive re-down re-pacifies via DefeatActor
+        EndIf
+    EndIf
+    If waited >= 900
+        _Log("[SNBaka] _EscalationCleanup: WARNING — hit the 15min hard cap still IsInSexAnimation=true; proceeding anyway (stuck scene faction?)")
     Else
-        Debug.Trace("[SNBaka] _EscalationCleanup: scene ended after " + waited + "s — proceeding with cleanup")
+        _Log("[SNBaka] _EscalationCleanup: scene ended after " + waited + "s — proceeding with cleanup")
     EndIf
     ; Defensive: a long wait is exactly where an actor could go invalid (unloaded, killed, deleted) out
     ; from under us. Every call below assumes both are live; without this guard a None here would throw
     ; the same "call X on a None object" error on every single line for the rest of the function.
     If !akA1 || !akA2 || akA1.IsDisabled() || akA2.IsDisabled()
-        Debug.Trace("[SNBaka] _EscalationCleanup: ABORTING — an actor went invalid while waiting for the scene to end (A1=" + akA1 + " A2=" + akA2 + ")")
+        _Log("[SNBaka] _EscalationCleanup: ABORTING — an actor went invalid while waiting for the scene to end (A1=" + akA1 + " A2=" + akA2 + ")")
         Return
     EndIf
-    ; Restore collision (teammate flag) and remove the DoNothing AI override.
+    ; Restore collision (teammate flag). Cosmetic — order doesn't matter for these two.
     SNBakaUI.SetNoCollision(akA1, False)
     SNBakaUI.SetNoCollision(akA2, False)
-    _HoldActorAI(akA1, False)
-    _HoldActorAI(akA2, False)
-    ; Restore any height-match scaling applied for this pair.
+    ; Restore any height-match scaling applied for this pair. Also cosmetic.
     _RestoreActorScale(akA1)
     _RestoreActorScale(akA2)
-    ; The attacker returns to normal; the DEFEATED victim stays SUBDUED — "at the attacker's mercy":
-    ; aggression is NOT restored and they're allied to the captor so neither re-aggros, until Release or
-    ; HelpUp frees them. (Player victims control themselves, so there's nothing to keep pacified.)
-    _PacifyActor(akA1, False)
-    ; The attacker must not re-aggro the (still nominally downed/captive) victim once un-pacified —
-    ; for NPC victims that's the mutual ally-rank below; a player victim skipped it entirely, so
-    ; restoring the attacker's normal aggression with nothing holding it back meant they went straight
-    ; back into combat against the player seconds after the scene ended (confirmed in logs).
+    ; Establish the "don't re-fight this person" relationship BEFORE anything below gives the attacker
+    ; back the means to act on hostility (AI control, aggression). Confirmed bug: this used to run AFTER
+    ; _HoldActorAI(akA1, False) and _PacifyActor(akA1, False) — a real timing window where the attacker's
+    ; AI could re-evaluate combat with its normal aggression already restored and nothing yet telling it
+    ; the player/victim was an ally, so it went straight back into combat seconds after the scene ended
+    ; (confirmed in logs — Combat_pace, a third-party combat-AI mod, showed the attacker actively pacing
+    ; through the entire window right after cleanup). The attacker returns to normal; the DEFEATED victim
+    ; stays SUBDUED — "at the attacker's mercy": aggression is NOT restored and they're allied to the
+    ; captor so neither re-aggros, until Release or HelpUp frees them.
     akA1.SetRelationshipRank(akA2, 4)
+    ; SNBaka.Captive used to be set only in this NPC-only branch (SetRelationshipRank on an NPC's OWN
+    ; faction/AI disposition is what actually needs the != PlayerRef guard -- the player has no AI to
+    ; read it). That bundled the tracking flag in with it by accident: SNBaka.Captive is a plain
+    ; narrative/state flag, "is this actor currently a subdued captive", which applies exactly the same
+    ; whether the victim is the player or an NPC -- and Acheron's OnActorRescued now depends on it being
+    ; accurate for BOTH. Confirmed bug: the player never got flagged, so the premature-AcheronNG-rescue
+    ; fix silently didn't apply to the exact player scenario it was built for.
+    StorageUtil.SetIntValue(akA2, "SNBaka.Captive", 1)
     If akA2 != PlayerRef
         akA2.SetRelationshipRank(akA1, 4)
-        StorageUtil.SetIntValue(akA2, "SNBaka.Captive", 1)
-    Else
+    EndIf
+    _Log("[SNBaka] _EscalationCleanup: relationship rank set (ally) BEFORE releasing AI/aggression — " + akA1 + " <-> " + akA2)
+    ; Give the attacker back its AI package (so it resumes normal behavior instead of standing frozen),
+    ; but NOT its aggression yet — confirmed in live testing that relationship rank alone isn't reliably
+    ; enough to stop the attacker re-engaging (its underlying faction disposition can still read as
+    ; hostile). The victim goes right back to being tracked as downed below, so the attacker stays
+    ; pacified for exactly as long as the victim stays subdued — _ForceRecover/Acheron's own _Recover
+    ; un-pacify the tracked SNBaka.GroundWindowAggressor when the victim is actually freed (HelpUp,
+    ; Release, get-up QTE win, or the nobody-around timeout), not here.
+    _HoldActorAI(akA1, False)
+    _HoldActorAI(akA2, False)
+    If akA2 == PlayerRef
         _PacifyActor(akA2, False)
     EndIf
+    _Log("[SNBaka] _EscalationCleanup: AI released for " + akA1 + " — aggression stays held until the victim is actually freed")
     If akA1 == PlayerRef || akA2 == PlayerRef
         Game.EnablePlayerControls()
     EndIf
@@ -2677,7 +3425,26 @@ Function _EscalationCleanup(Actor akA1, Actor akA2)
     ; them back to Acheron (it re-holds + keeps them out of combat, freed only via HelpUp/Release or the
     ; bridge's nobody-around timeout). If Acheron isn't present this no-ops and the pre-existing subdue
     ; state stands. Previously skipped for the player, which is why the PC fully recovered right after sex.
+    ; Re-track akA1 as the aggressor for this renewed down cycle — combat was stopped above, so a fresh
+    ; GetCombatTarget() capture on Acheron's side would find nothing; set it directly instead, same as
+    ; _DefeatGroundWindow does for an initial down. This is also what lets _ForceRecover/_Recover find
+    ; akA1 again to finally un-pacify it once the victim is actually freed.
+    StorageUtil.SetFormValue(akA2, "SNBaka.GroundWindowAggressor", akA1)
+    ; Clean graph reset BEFORE the re-down (same fix as the creature path): OStim's post-scene reset
+    ; is async and expression addons fight the skeleton right now — a collapse launched from a dirty
+    ; graph intermittently fails to play ("did not animate correctly after the scene").
+    Debug.SendAnimationEvent(akA2, "IdleForceDefaultState")
+    Utility.Wait(0.5)
     _DelegateDownToAcheron(akA2)
+    ; POSE ENFORCEMENT, same as the creature path: force the vanilla bleedout once the async defeat
+    ; lands — post-scene graphs regularly eat the native collapse, leaving the victim standing frozen.
+    If akA2 != PlayerRef
+        Utility.Wait(1.5)
+        If !akA2.IsDead()
+            Debug.SendAnimationEvent(akA2, "BleedoutStart")
+            _Log("[SNBaka] post-scene re-down: BleedoutStart enforced on " + akA2.GetDisplayName())
+        EndIf
+    EndIf
     ; Immediate "still down" nudge — same one every other intermediate action gets via UnlockBoth.
     ; Without this, coming back from a sex scene left the LLM waiting on Acheron's own up-to-30s poll
     ; to find out the victim is still down. _CueDecisionIfDowned already no-ops if the victim ISN'T
@@ -2690,7 +3457,7 @@ EndFunction
 ; The DLL splits the player's picks into these strings (or role="cancel").
 ; akAggressor/akVictim are the escalation pair (one is the player).
 Function _StartSexLabScene(String role, String intensity, String flavor, String actType, Actor akAggressor, Actor akVictim)
-    Debug.Trace("[SNBaka] _StartSexLabScene: role=" + role + " intensity=" + intensity + " flavor=" + flavor + " act=" + actType)
+    _Log("[SNBaka] _StartSexLabScene: role=" + role + " intensity=" + intensity + " flavor=" + flavor + " act=" + actType)
     Bool wasDrugged = _bDruggedEscalation
     _bDruggedEscalation = False
 
@@ -2806,7 +3573,7 @@ Function _StartSexLabScene(String role, String intensity, String flavor, String 
 
     String narrative = aggName + verb + vicName + typePhrase + flavorPhrase + "."
     SkyrimNetApi.RegisterEvent("baka_sexlab_trigger", narrative, agg, akVictim)
-    Debug.Notification(narrative)
+    _Notify(narrative)
 
     _EscalationCleanup(akAggressor, akVictim)
 EndFunction
@@ -2862,8 +3629,8 @@ Function _CueOngoing(String sType, String sDesc, Actor akAtk, Actor akVic, Float
         If bDebugLog
             ; RecordAnimation (called just before this) stored the formal interaction name on the aggressor.
             String act = StorageUtil.GetStringValue(akAtk, "SNBaka.LastAnim", "?")
-            Debug.Notification("[Baka] " + act + ": " + akAtk.GetDisplayName() + " -> " + akVic.GetDisplayName())
-            Debug.Trace("[SNBaka][ACTION] interaction=" + act + " type=" + sType \
+            _Notify("[Baka] " + act + ": " + akAtk.GetDisplayName() + " -> " + akVic.GetDisplayName())
+            _Log("[SNBaka][ACTION] interaction=" + act + " type=" + sType \
                 + " aggressor=" + akAtk.GetDisplayName() + " target=" + akVic.GetDisplayName() + " | " + sDesc)
         EndIf
     EndIf
@@ -2920,8 +3687,8 @@ Function _LogPair(String sFn, Actor akAtk, Actor akVic, Float wantX, Float wantY
         + sLR + (Math.Abs(lr) as Int) + " " + sFB + (Math.Abs(fb) as Int) + " U" + dz \
         + "  dist=" + dist + " rot=" + (rotOffset as Int) \
         + "  [asked R/L=" + (wantX as Int) + " F/B=" + (wantY as Int) + "]"
-    Debug.Notification("[Baka] " + msg)
-    Debug.Trace("[SNBaka][POS] " + msg + "  aAng=" + (aAng as Int) \
+    _Notify("[Baka] " + msg)
+    _Log("[SNBaka][POS] " + msg + "  aAng=" + (aAng as Int) \
         + "  ATK=" + akAtk.GetDisplayName() + "  VIC=" + akVic.GetDisplayName())
 EndFunction
 
@@ -2958,13 +3725,46 @@ Function _SetupPair(Actor akAtk, Actor akVic, Float xLocal, Float yLocal, Float 
     akVic.EvaluatePackage()
     Utility.Wait(0.1)
 
-    ; HARD AI STOP first, so nothing else drives them while we position.
+    ; HARD AI STOP first, so nothing else drives them while we position. Fixed order, in order:
+    ; calm (StopCombat above + pacify here) -> shrink/remove collision -> ghost + AI-hold + restrain/
+    ; DontMove -> THEN reposition -> THEN animate (caller starts the anim after this returns). Ghost/
+    ; Restrained/DontMove used to be applied AFTER the MoveTo/SetPosition block below, which left a
+    ; ~0.2-0.4s window where a freshly-teleported actor was neither ghosted nor movement-locked yet --
+    ; exactly the kind of window where residual AI/physics could nudge them before the pose locks in.
     SNBakaUI.SetNoCollision(akAtk, True)
     SNBakaUI.SetNoCollision(akVic, True)
     _HoldActorAI(akAtk, True)
     _HoldActorAI(akVic, True)
     _PacifyActor(akAtk, True)
     _PacifyActor(akVic, True)
+    ; _PacifyActor is ONE-WAY: the actor itself stops fighting, but nothing above stops OTHERS from
+    ; still TARGETING the victim mid-struggle (ghost only makes their hits whiff — they keep swinging,
+    ; confirmed report). Acheron's native pacify is the two-way state the ground phase already enjoys
+    ; ("ignoring & ignored by combat" — enemies drop them as a target entirely), and it's list-based
+    ; native state, not a spell that wears off, so one call holds until released in _CleanupPair.
+    ; VICTIM only: the AGGRESSOR must stay targetable so a genuinely hostile intercessor can still
+    ; break the struggle by hitting IT (same rule as the scene paths). The player variant clears
+    ; stale locks instead of pacifying — see _ProtectVictimTargeting.
+    _ProtectVictimTargeting(akVic)
+    If bDisableCollision
+        ; BOTH actors, player included -- the player-victim exception here left them the one attackable
+        ; participant in any struggle: confirmed from testing, a second falmer attacked the player
+        ; mid-struggle and the hit/stagger broke the animation, three times in one session. Explicit
+        ; spec: nobody attacks the victim of an aggression in progress. (The old "player isn't ghosted
+        ; so they won't fall" concern predates SetNoCollision being applied unconditionally above --
+        ; ghost only gates combat hit processing, not world collision, so there's nothing to fall
+        ; through.) _CleanupPair already un-ghosts both actors unconditionally on every exit path.
+        akAtk.SetGhost(True)
+        akVic.SetGhost(True)
+    EndIf
+    If !atkPlayer
+        akAtk.SetRestrained(True)
+        akAtk.SetDontMove(True)
+    EndIf
+    If !vicPlayer
+        akVic.SetRestrained(True)
+        akVic.SetDontMove(True)
+    EndIf
 
     ; --- editable offsets (SNBaka_Offsets.ini, key = sFn). Missing file/key falls back to the passed
     ; defaults, so no .ini == co-located + the action's own facing. x=R/L, y=F/B, z=up/down, rot=facing. ---
@@ -2981,6 +3781,17 @@ Function _SetupPair(Actor akAtk, Actor akVic, Float xLocal, Float yLocal, Float 
         oy   = SNBakaUI.GetOffset(kvic, "y",   oy)
         oz   = SNBakaUI.GetOffset(kvic, "z",   oz)
         orot = SNBakaUI.GetOffset(kvic, "rot", orot)
+    EndIf
+    ; PLAYER -> NPC (player is the attacker) never had the same per-direction override the victim
+    ; case got above — it silently fell back to the plain/NPC-vs-NPC key. Player anchor geometry
+    ; (vehicle marker, camera pivot) isn't identical to an NPC attacker's, so give it the same
+    ; "<sFn>_pcatk" override lever, symmetric with _pcvic.
+    If atkPlayer
+        String katk = sFn + "_pcatk"
+        ox   = SNBakaUI.GetOffset(katk, "x",   ox)
+        oy   = SNBakaUI.GetOffset(katk, "y",   oy)
+        oz   = SNBakaUI.GetOffset(katk, "z",   oz)
+        orot = SNBakaUI.GetOffset(katk, "rot", orot)
     EndIf
 
     ; --- anchor on the ATTACKER ---
@@ -3020,23 +3831,7 @@ Function _SetupPair(Actor akAtk, Actor akVic, Float xLocal, Float yLocal, Float 
         akVic.SetAngle(0.0, 0.0, vAng)
     EndIf
 
-    ; --- ghost (never player), restrain (never player), vehicle-pin BOTH ---
-    If bDisableCollision
-        If !atkPlayer
-            akAtk.SetGhost(True)
-        EndIf
-        If !vicPlayer
-            akVic.SetGhost(True)
-        EndIf
-    EndIf
-    If !atkPlayer
-        akAtk.SetRestrained(True)
-        akAtk.SetDontMove(True)
-    EndIf
-    If !vicPlayer
-        akVic.SetRestrained(True)
-        akVic.SetDontMove(True)
-    EndIf
+    ; --- vehicle-pin BOTH (ghost/restrain/DontMove already applied above, before repositioning) ---
     If mk1
         mk1.MoveTo(akAtk)
         If atkPlayer
@@ -3060,7 +3855,7 @@ EndFunction
 ; Role anims: A1=BaboBackHugStartM/LoopM, A2=BaboBackHugStartF/LoopF
 ; Works on any gender combination.
 Function BackHug_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] BackHug ENTER")
+    _Log("[SNBakaACT] BackHug ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3090,7 +3885,7 @@ EndFunction
 ; A1=BaboBackHugMolestStartM/LoopM, A2=BaboBackHugMolestStartF/LoopF
 ; Works on any gender combination.
 Function BackHugMolest_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] BackHugMolest ENTER")
+    _Log("[SNBakaACT] BackHugMolest ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3138,7 +3933,7 @@ EndFunction
 ; A1=BaboFrontHugStartM/LoopM, A2=BaboFrontHugStartF/LoopF
 ; Works on any gender combination.
 Function FrontHug_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] FrontHug ENTER")
+    _Log("[SNBakaACT] FrontHug ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3168,7 +3963,7 @@ EndFunction
 ; Affectionate: the initiator takes the target by the arm and holds them close. Gendered M/F
 ; parts like the hugs (M = initiator, F = target). Single loopable clip — no separate start/loop.
 Function ArmHold_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] ArmHold ENTER")
+    _Log("[SNBakaACT] ArmHold ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3195,7 +3990,7 @@ EndFunction
 ; A1=BaboKissLoveS01/S02_A1, A2=BaboKissLoveS01/S02_A2
 ; Works on any gender combination.
 Function KissLove_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] KissLove ENTER")
+    _Log("[SNBakaACT] KissLove ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3237,7 +4032,7 @@ EndFunction
 ; Uses action-specific resist/stop anims: SLAPForcedKiss01_A1/A2_Resist and _Stop.
 ; Works on any gender combination.
 Function ForcedKiss_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] ForcedKiss ENTER")
+    _Log("[SNBakaACT] ForcedKiss ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3282,7 +4077,7 @@ EndFunction
 ; --- TouchBreasts --- [FEMALE TARGET REQUIRED]
 ; A1=Babo_TouchingBreasts_A01, A2=Babo_TouchingBreasts_A02
 Function TouchBreasts_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] TouchBreasts ENTER")
+    _Log("[SNBakaACT] TouchBreasts ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3313,7 +4108,7 @@ EndFunction
 ; --- SuckBreasts --- [FEMALE TARGET REQUIRED]
 ; A1=Babo_SuckingBreasts_A01, A2=Babo_SuckingBreasts_A02
 Function SuckBreasts_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] SuckBreasts ENTER")
+    _Log("[SNBakaACT] SuckBreasts ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3344,7 +4139,7 @@ EndFunction
 ; --- ExaminePrivates --- [FEMALE TARGET REQUIRED] [bResistable]
 ; A1=BaboExaminePussyA1, A2=BaboExaminePussyA2
 Function ExaminePrivates_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] ExaminePrivates ENTER")
+    _Log("[SNBakaACT] ExaminePrivates ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3368,7 +4163,7 @@ Function ExaminePrivates_Execute(Actor akInitiator, Actor akTarget)
         fTouchLoopDuration)
 
     If _bQTEDefeated
-        Debug.Trace("[SNBaka] Execute: QTE defeated — calling DefeatGroundWindow. attacker=" + akInitiator.GetDisplayName() + " victim=" + akTarget.GetDisplayName())
+        _Log("[SNBaka] Execute: QTE defeated — calling DefeatGroundWindow. attacker=" + akInitiator.GetDisplayName() + " victim=" + akTarget.GetDisplayName())
         _bQTEDefeated = False
         _UnlockAttackerOnly(akInitiator)
         _DefeatGroundWindow(akInitiator, akTarget)
@@ -3381,7 +4176,7 @@ EndFunction
 ; --- PlayPrivates --- [FEMALE TARGET REQUIRED] [bResistable]
 ; A1=BaboPlayingPussyA1, A2=BaboPlayingPussyA2
 Function PlayPrivates_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] PlayPrivates ENTER")
+    _Log("[SNBakaACT] PlayPrivates ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3411,7 +4206,7 @@ EndFunction
 ; --- OralOnTarget --- [FEMALE TARGET REQUIRED]
 ; A1=BaboSuckingPussyA01, A2=BaboSuckingPussyA02
 Function OralOnTarget_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] OralOnTarget ENTER")
+    _Log("[SNBakaACT] OralOnTarget ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3443,7 +4238,7 @@ EndFunction
 ; A1=BaboSpankingM, A2=BaboSpankingF
 ; Works on any gender combination.
 Function Spanking_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] Spanking ENTER")
+    _Log("[SNBakaACT] Spanking ENTER")
     If IsInSexAnimation(akInitiator) || IsInSexAnimation(akTarget)
         SpankTarget_Execute(akInitiator, akTarget, True)
         Return
@@ -3480,7 +4275,7 @@ EndFunction
 ; A1=BaboWombHitM (single shot), A2=BaboWombHit (start) + BaboWombHitLoop
 ; Works on any gender combination.
 Function WombHit_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] WombHit ENTER")
+    _Log("[SNBakaACT] WombHit ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3515,7 +4310,7 @@ EndFunction
 ; A1=Babo_Flirt_A02/A02D (performer — the one flirting), A2=Babo_Flirt_A01 (observer)
 ; Works on any gender combination.
 Function Flirt_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] Flirt ENTER")
+    _Log("[SNBakaACT] Flirt ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3593,17 +4388,17 @@ EndFunction
 ; Initiator plays the _A02 (toucher) role; target plays _A01. Caress = face-to-face (rot 180);
 ; tease breasts/below = same direction (rot 0), with the initiator behind for "below".
 Function FlirtFace_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] FlirtFace ENTER")
+    _Log("[SNBakaACT] FlirtFace ENTER")
     _FlirtEscalate(akInitiator, akTarget, "Babo_FlirtFace_A02", "Babo_FlirtFace_A01", "tenderly caresses the face of", 180.0)
 EndFunction
 
 Function FlirtBreast_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] FlirtBreast ENTER")
+    _Log("[SNBakaACT] FlirtBreast ENTER")
     _FlirtEscalate(akInitiator, akTarget, "Babo_FlirtBreast_A02", "Babo_FlirtBreast_A01", "playfully fondles the breasts of", 0.0)
 EndFunction
 
 Function FlirtPussy_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] FlirtPussy ENTER")
+    _Log("[SNBakaACT] FlirtPussy ENTER")
     _FlirtEscalate(akInitiator, akTarget, "Babo_FlirtPussy_A02", "Babo_FlirtPussy_A01", "slips a hand between the legs of", 0.0)
 EndFunction
 
@@ -3620,7 +4415,7 @@ Bool Function _InspectGuard(Actor akInitiator, Actor akTarget)
         SkyrimNetApi.RegisterEvent("baka_forced", \
             akInitiator.GetDisplayName() + " has already looked " + akTarget.GetDisplayName() + " over thoroughly — there is nothing more to learn from inspecting again. Time to escalate, take what is wanted, or move on.", \
             akInitiator, akTarget)
-        Debug.Trace("[SNBaka] _InspectGuard: inspect loop capped on " + akTarget.GetDisplayName())
+        _Log("[SNBaka] _InspectGuard: inspect loop capped on " + akTarget.GetDisplayName())
         Return False
     EndIf
     StorageUtil.SetIntValue(akTarget, "SNBaka.InspectCount", ic + 1)
@@ -3631,7 +4426,7 @@ EndFunction
 ; --- CapturedInspect --- [FEMALE TARGET REQUIRED] [bResistable]
 ; Sequence includes CapturedBoob and CapturedPussy stages — requires female A2.
 Function CapturedInspect_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] CapturedInspect ENTER")
+    _Log("[SNBakaACT] CapturedInspect ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3671,7 +4466,7 @@ EndFunction
 ; --- Investigate --- [FEMALE TARGET REQUIRED] [bResistable]
 ; Thorough 3-stage inspection — requires female A2.
 Function Investigate_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] Investigate ENTER")
+    _Log("[SNBakaACT] Investigate ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3712,9 +4507,13 @@ EndFunction
 
 ; --- Struggle --- [bResistable]
 ; 5-stage grapple. Works on any gender combination.
-Function Struggle_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] Struggle ENTER")
-    If !IsEligible(akInitiator, akTarget)
+; abFromHit: set ONLY by the on-hit mid-combat path (OnCreatureHitFollower's humanoid branch) --
+; relaxes IsEligible's attacker-in-combat gate for exactly that call, since a struggle triggered BY a
+; combat hit is mid-combat by definition. LLM/YAML invocations (down_pin/struggle actions) call with
+; two args, so the default keeps their behavior unchanged.
+Function Struggle_Execute(Actor akInitiator, Actor akTarget, Bool abFromHit = False)
+    _Log("[SNBakaACT] Struggle ENTER")
+    If !IsEligible(akInitiator, akTarget, abFromHit)
         Return
     EndIf
     If !LockBoth(akInitiator, akTarget)
@@ -3755,12 +4554,13 @@ Function Struggle_Execute(Actor akInitiator, Actor akTarget)
     PlayPairedSequence(akInitiator, akTarget, fStruggleLeft, yFront, 0.0, a1, a2, fSequenceStageTimer, True)
 
     If _bQTEDefeated
-        Debug.Trace("[SNBaka] Execute: QTE defeated — calling DefeatGroundWindow. attacker=" + akInitiator.GetDisplayName() + " victim=" + akTarget.GetDisplayName())
+        _Log("[SNBaka] Execute: QTE defeated — calling DefeatGroundWindow. attacker=" + akInitiator.GetDisplayName() + " victim=" + akTarget.GetDisplayName())
         _bQTEDefeated = False
         _UnlockAttackerOnly(akInitiator)
         _DefeatGroundWindow(akInitiator, akTarget)
     Else
         If !_bAELVictimEscaped
+            _Log("[SNBaka] struggle outcome: attacker won the exchange (not a fresh QTE-defeat) — _RecoveryPeriod on " + akTarget)
             _RecoveryPeriod(akTarget, akInitiator, 10.0)
         ElseIf _IsDownedAny(akTarget)
             ; Three ways up, full stop: HelpUp, nobody around, or winning the QTE. This is #3 — the
@@ -3768,7 +4568,10 @@ Function Struggle_Execute(Actor akInitiator, Actor akTarget)
             ; they're up, period. _ForceRecover clears the hold AND stands them up; _CleanupPair (already
             ; run by PlayPairedSequence) separately restores the attacker's normal aggression/AI, which is
             ; correct here since the victim is genuinely no longer downed — the fight can resume for real.
+            _Log("[SNBaka] struggle outcome: victim escaped AND was already downed — _ForceRecover (condition #3) on " + akTarget)
             _ForceRecover(akTarget)
+        Else
+            _Log("[SNBaka] struggle outcome: victim escaped, was not downed to begin with — no recovery action needed")
         EndIf
         _CueResistOutcome("baka_forced", akInitiator, akTarget)
         If bExpressionsEnabled
@@ -3781,7 +4584,7 @@ EndFunction
 ; --- ChokeHug --- [bResistable]
 ; 5-stage chokehold. Works on any gender combination.
 Function ChokeHug_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] ChokeHug ENTER")
+    _Log("[SNBakaACT] ChokeHug ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3823,7 +4626,7 @@ Function ChokeHug_Execute(Actor akInitiator, Actor akTarget)
     PlayPairedSequence(akInitiator, akTarget, 0.0, 0.0, 0.0, a1, a2, fSequenceStageTimer, True)
 
     If _bQTEDefeated
-        Debug.Trace("[SNBaka] Execute: QTE defeated — calling DefeatGroundWindow. attacker=" + akInitiator.GetDisplayName() + " victim=" + akTarget.GetDisplayName())
+        _Log("[SNBaka] Execute: QTE defeated — calling DefeatGroundWindow. attacker=" + akInitiator.GetDisplayName() + " victim=" + akTarget.GetDisplayName())
         _bQTEDefeated = False
         _UnlockAttackerOnly(akInitiator)
         ; Choke knocks the victim out — female victims faint (BaboFaintF). No male faint anim exists,
@@ -3835,6 +4638,7 @@ Function ChokeHug_Execute(Actor akInitiator, Actor akTarget)
         _DefeatGroundWindow(akInitiator, akTarget)
     Else
         If !_bAELVictimEscaped
+            _Log("[SNBaka] struggle outcome: attacker won the exchange (not a fresh QTE-defeat) — _RecoveryPeriod on " + akTarget)
             _RecoveryPeriod(akTarget, akInitiator, 10.0)
         ElseIf _IsDownedAny(akTarget)
             ; Three ways up, full stop: HelpUp, nobody around, or winning the QTE. This is #3 — the
@@ -3842,7 +4646,10 @@ Function ChokeHug_Execute(Actor akInitiator, Actor akTarget)
             ; they're up, period. _ForceRecover clears the hold AND stands them up; _CleanupPair (already
             ; run by PlayPairedSequence) separately restores the attacker's normal aggression/AI, which is
             ; correct here since the victim is genuinely no longer downed — the fight can resume for real.
+            _Log("[SNBaka] struggle outcome: victim escaped AND was already downed — _ForceRecover (condition #3) on " + akTarget)
             _ForceRecover(akTarget)
+        Else
+            _Log("[SNBaka] struggle outcome: victim escaped, was not downed to begin with — no recovery action needed")
         EndIf
         _CueResistOutcome("baka_forced", akInitiator, akTarget)
         If bExpressionsEnabled
@@ -3856,7 +4663,7 @@ EndFunction
 ; 5-stage. S05 = liberation (star pattern). Attacker behind victim, same facing direction.
 ; Works on any gender combination.
 Function DrunkExploit_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] DrunkExploit ENTER")
+    _Log("[SNBakaACT] DrunkExploit ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3912,7 +4719,7 @@ EndFunction
 ; context passed to SkyrimNet and SexLab.
 ; Works on any gender combination.
 Function DrugFood_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] DrugFood ENTER")
+    _Log("[SNBakaACT] DrugFood ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3936,7 +4743,7 @@ Function DrugFood_Execute(Actor akInitiator, Actor akTarget)
 
     ; Animation done — victim collapses unconscious. No QTE; the drug does the work.
     ; Set flag so _DefeatGroundWindow and _DoEscalation use unconscious-victim context.
-    Debug.Trace("[SNBaka] DrugFood_Execute: animation complete — collapsing victim into ground window (drugged)")
+    _Log("[SNBaka] DrugFood_Execute: animation complete — collapsing victim into ground window (drugged)")
     _bDruggedEscalation = True
     _UnlockAttackerOnly(akInitiator)
     _DefeatGroundWindow(akInitiator, akTarget)
@@ -3948,7 +4755,7 @@ EndFunction
 ; No body-sex gate — Baka uses role-based A1/A2 naming so any character can perform the pose.
 ; (HasFemaleBody on the player is unreliable with RaceMenu presets — male base, female appearance.)
 Function ShowingOffBody_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] ShowingOffBody ENTER")
+    _Log("[SNBakaACT] ShowingOffBody ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -3978,7 +4785,7 @@ EndFunction
 ; Non-resistable variant — used for consensual or subdued contexts.
 ; Use PlayPrivates_Execute for the resistable version.
 Function FondlePussy_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] FondlePussy ENTER")
+    _Log("[SNBakaACT] FondlePussy ENTER")
     If !IsEligible(akInitiator, akTarget)
         Return
     EndIf
@@ -4017,7 +4824,7 @@ EndFunction
 ; akTarget is any actor currently in an active animation (victim or initiator).
 ; If they are not in a scene, does nothing.
 Function InterruptScene_Execute(Actor akIntervenor, Actor akTarget)
-    Debug.Trace("[SNBakaACT] InterruptScene ENTER")
+    _Log("[SNBakaACT] InterruptScene ENTER")
     If !akIntervenor || !akTarget
         Return
     EndIf
@@ -4034,7 +4841,7 @@ EndFunction
 ; The scene initiator voluntarily ends their own ongoing animation.
 ; akInitiator must currently be locked (in an active animation).
 Function CallOff_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] CallOff ENTER")
+    _Log("[SNBakaACT] CallOff ENTER")
     If !akInitiator
         Return
     EndIf
@@ -4072,24 +4879,27 @@ Function Interact_ShowMenu(Actor akTarget, Actor akCaster)
     ; If the target is downed — either by US (SNBaka.OnGround, from a QTE defeat/drug), by an external
     ; mod/cause (any bleedout, e.g. Surrender), or held purely by Acheron (SNAcheron.Held) — open the
     ; downed-victim menu instead of the normal interact menu. This must come before the IsActorLocked
-    ; guard below. Vanilla (no PrismaUI) keeps the old auto-escalate.
+    ; guard below.
+    ; Always attempt the real menu now, unconditionally — this used to gate on SNBakaUI.IsAvailable()
+    ; here in Papyrus first, silently auto-escalating instead whenever that read false even briefly
+    ; (e.g. right after a save load, before the view finished recreating). ShowDownedMenu already does
+    ; its own IsAvailable()+CreateMenuView() recovery internally on the C++ side — that retry never got
+    ; a chance to run when the Papyrus-side pre-check alone decided to skip straight to auto-escalate.
+    ; PrismaUI is a hard requirement for this mod now, so there's no real vanilla-fallback case left to
+    ; preserve here.
     If _IsDownedAny(akTarget)
-        If SNBakaUI.IsAvailable()
-            _pendingCaster = akCaster
-            _pendingTarget = akTarget
-            SNBakaUI.ShowDownedMenu(akCaster, akTarget)
-        Else
-            Escalate_Execute(akCaster, akTarget)
-        EndIf
+        _pendingCaster = akCaster
+        _pendingTarget = akTarget
+        SNBakaUI.ShowDownedMenu(akCaster, akTarget)
         Return
     EndIf
 
     If IsActorLocked(akCaster) || IsActorLocked(akTarget)
-        Debug.Trace("[SNBaka] interact blocked: already in an interaction.")
+        _Log("[SNBaka] interact blocked: already in an interaction.")
         Return
     EndIf
     If _bCooldownActive
-        Debug.Trace("[SNBaka] interact blocked: still on cooldown.")
+        _Log("[SNBaka] interact blocked: still on cooldown.")
         Return
     EndIf
     If !IsEligible(akCaster, akTarget)
@@ -4115,7 +4925,7 @@ Function Interact_ShowMenu(Actor akTarget, Actor akCaster)
     Message _mmAggPhys = Game.GetFormFromFile(0x000803, "SkyrimNet_BakaIntegration.esp") as Message
     Message _mmAggSex  = Game.GetFormFromFile(0x000804, "SkyrimNet_BakaIntegration.esp") as Message
     If !_mmMain
-        Debug.Trace("[SNBaka] ERROR: InteractMenuMain not found at 0x00080A - ESL FormID mismatch?")
+        _Log("[SNBaka] ERROR: InteractMenuMain not found at 0x00080A - ESL FormID mismatch?")
         Return
     EndIf
 
@@ -4291,16 +5101,16 @@ EndFunction
 ; Called during the ground window to free the downed victim immediately without escalating.
 ; The attacker steps back — the moment passes. Works for both NPC and player initiators.
 Function Release_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] Release ENTER")
+    _Log("[SNBakaACT] Release ENTER")
     If !akTarget || !akInitiator
         Return
     EndIf
     If _IsCreatureActor(akInitiator) || _IsCreatureActor(akTarget)
-        Debug.Trace("[SNBaka] Release_Execute: blocked — creature actor (use CreatureEscalate)")
+        _Log("[SNBaka] Release_Execute: blocked — creature actor (use CreatureEscalate)")
         Return
     EndIf
     If _IsDownedAny(akInitiator)
-        Debug.Trace("[SNBaka] Release_Execute: blocked — initiator is downed")
+        _Log("[SNBaka] Release_Execute: blocked — initiator is downed")
         Return
     EndIf
     Bool ours = StorageUtil.GetIntValue(akTarget, "SNBaka.OnGround", 0) == 1
@@ -4309,7 +5119,7 @@ Function Release_Execute(Actor akInitiator, Actor akTarget)
         Return
     EndIf
     _bReleaseRequested = True
-    Debug.Trace("[SNBaka] Release_Execute: " + akInitiator.GetDisplayName() + " releases " + akTarget.GetDisplayName())
+    _Log("[SNBaka] Release_Execute: " + akInitiator.GetDisplayName() + " releases " + akTarget.GetDisplayName())
     ; If they were defeated by something other than our ground window (Acheron combat bleedout), free
     ; them directly — the ground-window flag alone won't be read by anyone.
     If external
@@ -4323,11 +5133,14 @@ EndFunction
 ; Idempotent "get this actor off the ground NOW", callable from ANY state — our ground window, an
 ; external Acheron/other bleedout, or a stuck leftover after a scene. Safe to call repeatedly. This
 ; is the single reliable recovery path; everything that frees a downed actor should funnel here.
-Function _ForceRecover(Actor akActor)
+; abFullRescue=False (Stand Back only) skips Acheron's own dramatic RescueActor call -- see
+; _ClearAcheronHold. Every other caller keeps the default (True), unchanged.
+Function _ForceRecover(Actor akActor, Bool abFullRescue = True)
     If !akActor
         Return
     EndIf
     Bool isPlayer = (akActor == PlayerRef)
+    _Log("[SNBaka] _ForceRecover ENTER: " + akActor.GetDisplayName() + " isPlayer=" + isPlayer + " abFullRescue=" + abFullRescue)
     ; If our ground window is currently running, make it exit cleanly instead of fighting us.
     _bReleaseRequested = True
     _bStandBack        = False
@@ -4335,22 +5148,69 @@ Function _ForceRecover(Actor akActor)
     StorageUtil.SetStringValue(akActor, "SNBaka.DownPose",      "")
     StorageUtil.SetIntValue(akActor,    "SNBaka.Locked",        0)
     StorageUtil.SetIntValue(akActor,    "SNBaka.StopRequested", 0)
+    ; This used to be left set — only _OnVictimWon (a genuine struggle-escape) ever cleared it, so
+    ; Release/HelpUp/Stand Back (everything routing through here) never actually ended the "captive"
+    ; relationship this flag represents. Harmless on its own, but it's about to become load-bearing:
+    ; Acheron's OnActorRescued checks this exact flag to tell "we legitimately freed them" apart from
+    ; "AcheronNG's own defeat-duration timer rescued them out from under an intended captivity" — if
+    ; this stayed 1 through a real release, that check couldn't tell the two apart.
+    StorageUtil.SetIntValue(akActor,    "SNBaka.Captive",       0)
+    ; The victim is actually being freed now — this is where the tracked aggressor (held pacified since
+    ; _EscalationCleanup, if a scene happened) finally gets its aggression back, not immediately after
+    ; the scene ends. Read it before clearing the reference.
+    Actor trackedThreat = StorageUtil.GetFormValue(akActor, "SNBaka.GroundWindowAggressor") as Actor
+    If trackedThreat
+        _PacifyActor(trackedThreat, False)
+        ; End the "lover"-rank anti-re-aggro link from the escalation that downed them (humanoid
+        ; aggressors too — the creature-wide sweep below only covers supported creatures).
+        trackedThreat.SetRelationshipRank(akActor, 0)
+        If akActor != PlayerRef
+            akActor.SetRelationshipRank(trackedThreat, 0)
+        EndIf
+    EndIf
+    ; Also sweep stale creature links from past cycles (never reverted by older builds — confirmed:
+    ; a giant that had previously beaten this victim would never attack them again).
+    _ClearAggressorBonds(akActor)
+    StorageUtil.SetFormValue(akActor,   "SNBaka.GroundWindowAggressor", None)
     akActor.SetRestrained(False)
     akActor.SetDontMove(False)
     If !isPlayer
         _PacifyActor(akActor, False)
         _HoldActorAI(akActor, False)
     EndIf
-    ; If they're in an Acheron defeat (bleedout OR a pure SNAcheron.Held hold), clear THAT too —
-    ; otherwise standing them up locally won't stick. This is what makes HelpUp actually work on a
-    ; combat-defeated player AND on a victim Acheron is holding with no vanilla bleedout at all.
-    _ClearAcheronHold(akActor)
-    _Recover(akActor)            ; IdleForceDefaultState (stand up) + essential-HP guard
+    ; Acheron's own RescueActor (inside _ClearAcheronHold) pops a bled-out actor upright natively,
+    ; the instant it's called -- no animation, just "up". Calling it HERE, before _Recover gets a
+    ; chance to play its own get-up transition, left nothing down to visibly transition out of: the
+    ; actor was already standing by the time our SendAnimationEvent fired. Confirmed real bug from
+    ; testing: HelpUp on the player looked like they "just became up" with no stand-up animation at
+    ; all. _Recover already clears the Acheron hold itself, in the right order (animate first, then
+    ; clear) -- let it do that instead of racing it here. Only the abFullRescue flag needs threading
+    ; through so Stand Back's "skip the dramatic rescue" intent still reaches it.
+    If _IsDownedAny(akActor)
+        _Recover(akActor, abFullRescue)   ; get-up transition first, THEN Acheron hold clear + essential-HP guard
+    Else
+        ; Already standing — e.g. the bridge's cross-script control-restore handoff fires this AFTER
+        ; its own recovery ritual finished. Re-running the get-up staggered the player repeatedly and
+        ; raced a second queued RescueActor (confirmed report: "after using the KEY to stand, I
+        ; staggered several times and cannot attack"). Skip the ritual; everything below is the
+        ; idempotent sanitize half, which is the only part the handoff needs.
+        _Log("[SNBaka] _ForceRecover: " + akActor.GetDisplayName() + " is already up — sanitize only, skipping the get-up ritual")
+    EndIf
     If isPlayer
         Game.EnablePlayerControls()
+        ; OStim sets this for player scenes and a force-stopped/refused scene can strand it — nothing
+        ; else in either mod ever cleared it. Confirmed symptom pair: can't attack + sluggish camera
+        ; after recovery. Idempotent when already clean.
+        Game.SetPlayerAIDriven(False)
+        ; Lingering Acheron PACIFY on the player (applied by earlier builds, save-persistent, native
+        ; handling blocks attack/sprint) — strip it at every recovery. No-op on a clean player; the
+        ; !IsDefeated guard keeps an active defeat's own pacify untouched.
+        If StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Present", 0) == 1 && !Acheron.IsDefeated(PlayerRef)
+            Acheron.ReleaseActor(PlayerRef)
+        EndIf
     EndIf
     akActor.EvaluatePackage()
-    Debug.Trace("[SNBaka] _ForceRecover: stood up " + akActor.GetDisplayName() + " (player=" + isPlayer + ")")
+    _Log("[SNBaka] _ForceRecover: stood up " + akActor.GetDisplayName() + " (player=" + isPlayer + ")")
 EndFunction
 
 ; --- Help Up ---
@@ -4359,36 +5219,65 @@ EndFunction
 ; OR an external Acheron bleedout — so it ALSO rescues a player who got stuck on the ground after a
 ; scene. The helper briefly crouches over the victim ("check downed") before lifting them.
 Function HelpUp_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] HelpUp ENTER")
+    _Log("[SNBakaACT] HelpUp ENTER")
     If !akInitiator || !akTarget
         Return
     EndIf
     If _IsCreatureActor(akInitiator) || _IsCreatureActor(akTarget)
-        Debug.Trace("[SNBaka] HelpUp_Execute: blocked — creature actor (use CreatureEscalate)")
+        _Log("[SNBaka] HelpUp_Execute: blocked — creature actor (use CreatureEscalate)")
         Return
     EndIf
     If _IsDownedAny(akInitiator)
-        Debug.Trace("[SNBaka] HelpUp_Execute: blocked — initiator is downed")
+        _Log("[SNBaka] HelpUp_Execute: blocked — initiator is downed")
         Return
     EndIf
     If !_IsDownedAny(akTarget)
-        Debug.Trace("[SNBaka] HelpUp_Execute: target not downed — nothing to do")
-        Return
+        ; Two confirmed races land a HelpUp on a victim who is "down" to the eye but not to _IsDownedAny:
+        ; (a) native bleedout whose Acheron defeat/adoption hasn't finished landing yet, and (b) a
+        ; creature pin in progress — the grab temporarily rescues the victim out of Acheron to animate,
+        ; so mid-pin she reads as recovered (10:52:50 log: LLM HelpUp during Joylie's falmer pin no-oped).
+        ; The helper's intent is unambiguous, so wait out the transition and help once she's back down.
+        Float settle = 0.0
+        While settle < 15.0 && !_IsDownedAny(akTarget) && (IsActorLocked(akTarget) || akTarget.IsBleedingOut()) && !akTarget.IsDead()
+            Utility.Wait(0.5)
+            settle += 0.5
+        EndWhile
+        If !_IsDownedAny(akTarget)
+            _Log("[SNBaka] HelpUp_Execute: target not downed (waited " + settle + "s) — nothing to do")
+            Return
+        EndIf
+        _Log("[SNBaka] HelpUp_Execute: down state landed after " + settle + "s — proceeding")
     EndIf
-    Debug.Trace("[SNBaka] HelpUp_Execute: " + akInitiator.GetDisplayName() + " helps up " + akTarget.GetDisplayName())
+    _Log("[SNBaka] HelpUp_Execute: " + akInitiator.GetDisplayName() + " helps up " + akTarget.GetDisplayName())
     SkyrimNetApi.RegisterEvent("baka_release", \
         akInitiator.GetDisplayName() + " crouches beside " + akTarget.GetDisplayName() + " and pulls them back to their feet. " + \
         akTarget.GetDisplayName() + " is up again now — shaken and worse for wear, but no longer down.", \
         akInitiator, akTarget)
     _ClearActorTears(akTarget)
-    ; Brief "check downed" — the helper kneels beside the victim (the same Babo_Kneel pose used by
-    ; PoseKneel) before lifting them. NPCs only; never the player.
-    If akInitiator != PlayerRef && !akInitiator.IsInCombat()
+    ; Brief "check downed" before lifting. NPCs get Babo_Kneel (the same pose PoseKneel uses) — it's a
+    ; custom third-person-only pose, so never sent to the player. The player instead gets the vanilla
+    ; IdleTake (pick-up-object idle, has proper first-person data, already used elsewhere on the player
+    ; for the same "reach down" beat) — no explicit reset after, it's a self-resetting vanilla idle.
+    If akInitiator == PlayerRef
+        ; No combat gate for the player: helping someone up mid-fight is a deliberate button press,
+        ; and skipping the beat here is exactly what read as "I did no action" in testing. If the
+        ; combat graph swallows the idle, it just doesn't play — harmless.
+        Debug.SendAnimationEvent(akInitiator, "IdleTake")
+        Utility.Wait(2.0)
+    ElseIf !akInitiator.IsInCombat()
         Debug.SendAnimationEvent(akInitiator, "Babo_Kneel")
         Utility.Wait(2.0)
         Debug.SendAnimationEvent(akInitiator, "IdleForceDefaultState")
     EndIf
     _ForceRecover(akTarget)
+    ; Help Up is a deliberate caring act — Calm the target so they don't immediately re-enter combat
+    ; the moment they're back on their feet (same Calm-archetype pattern used elsewhere in this file,
+    ; e.g. _CalmForAnim/_PacifyActor). No-op if SNBakaCalm was never assigned, or target isn't fighting.
+    If SNBakaCalm && akTarget.IsInCombat()
+        akTarget.StopCombat()
+        SNBakaCalm.Cast(akTarget, akTarget)
+        _Log("[SNBaka] HelpUp_Execute: cast SNBakaCalm on " + akTarget.GetDisplayName())
+    EndIf
 EndFunction
 
 ; --- Capture ---
@@ -4397,25 +5286,25 @@ EndFunction
 ; down/bleedout state, and a captive relationship is recorded for SkyrimNet to roleplay (captor =
 ; master, victim = prisoner/slave). Works for both a Baka ground-window down AND an Acheron bleedout.
 Function Capture_Execute(Actor akCaptor, Actor akVictim)
-    Debug.Trace("[SNBakaACT] Capture ENTER")
+    _Log("[SNBakaACT] Capture ENTER")
     If !akCaptor || !akVictim
         Return
     EndIf
     If _IsCreatureActor(akCaptor) || _IsCreatureActor(akVictim)
-        Debug.Trace("[SNBaka] Capture: blocked — creature actor")
+        _Log("[SNBaka] Capture: blocked — creature actor")
         Return
     EndIf
     If _IsDownedAny(akCaptor)
-        Debug.Trace("[SNBaka] Capture: blocked — captor is downed")
+        _Log("[SNBaka] Capture: blocked — captor is downed")
         Return
     EndIf
     If !_IsDownedAny(akVictim)
-        Debug.Trace("[SNBaka] Capture: target not downed — ignored")
+        _Log("[SNBaka] Capture: target not downed — ignored")
         Return
     EndIf
     ; NPC-vs-NPC is now supported: the Calm spell + "stand down everyone hostile to the CAPTIVE"
     ; detection works regardless of who the captor is, so we no longer gate this to the player.
-    Debug.Trace("[SNBaka] Capture: " + akCaptor.GetDisplayName() + " captures " + akVictim.GetDisplayName())
+    _Log("[SNBaka] Capture: " + akCaptor.GetDisplayName() + " captures " + akVictim.GetDisplayName())
     Bool isPlayer = (akVictim == PlayerRef)
 
     ; ---- PLAYER hybrid: a brief HELD-CAPTIVE beat on the ground first, THEN freed as captive. ----
@@ -4479,16 +5368,24 @@ EndFunction
 ; Plus (the "SSLV Entry" mod event). OPTIONAL: no-ops cleanly if Simple Slavery isn't installed or the
 ; MCM toggle is off. NPC victims just get a narrative beat (Simple Slavery only auctions the player).
 Function SellToSlavery_Execute(Actor akSeller, Actor akVictim)
-    Debug.Trace("[SNBakaACT] SellToSlavery ENTER")
+    _Log("[SNBakaACT] SellToSlavery ENTER")
     If !akSeller || !akVictim
         Return
     EndIf
+    ; Real plugin-presence check (same pattern Ostim_interactions uses for Stage Flow) -- the "SSLV
+    ; Entry" mod event no-ops harmlessly without SS++, but everything BEFORE it (clearing the defeat
+    ; state, re-enabling player controls, the capture narration) very much doesn't: without the actual
+    ; auction to hand off to, this action just silently freed the victim.
+    If !IsSimpleSlaveryInstalled()
+        _Log("[SNBaka] SellToSlavery: blocked — SimpleSlavery.esp not installed")
+        Return
+    EndIf
     If _IsCreatureActor(akSeller) || _IsCreatureActor(akVictim)
-        Debug.Trace("[SNBaka] SellToSlavery: blocked — creature actor")
+        _Log("[SNBaka] SellToSlavery: blocked — creature actor")
         Return
     EndIf
     If _IsDownedAny(akSeller)
-        Debug.Trace("[SNBaka] SellToSlavery: blocked — seller is downed")
+        _Log("[SNBaka] SellToSlavery: blocked — seller is downed")
         Return
     EndIf
     If akVictim != PlayerRef
@@ -4499,7 +5396,7 @@ Function SellToSlavery_Execute(Actor akSeller, Actor akVictim)
         Return
     EndIf
     If !bSellToSlavery
-        Debug.Trace("[SNBaka] SellToSlavery: disabled in MCM — skipped")
+        _Log("[SNBaka] SellToSlavery: disabled in MCM — skipped")
         Return
     EndIf
     ; Clean the defeat state before the hand-off so the player isn't bleeding out/Acheron-held at the auction.
@@ -4514,7 +5411,70 @@ Function SellToSlavery_Execute(Actor akSeller, Actor akVictim)
     ; Hand off to Simple Slavery Plus Plus via its "SSLV Entry" mod event. If SS++ isn't installed,
     ; nothing is listening and this is a harmless no-op (so it's a soft dependency).
     SendModEvent("SSLV Entry")
-    Debug.Trace("[SNBaka] SellToSlavery: sent SSLV Entry")
+    _Log("[SNBaka] SellToSlavery: sent SSLV Entry")
+EndFunction
+
+; --- EnslaveFollower ---
+; An NPC hauls the player's DOWNED follower off into slavery via the Follower Slavery Mod (FSM).
+; Deliberately narrow so the LLM can never confuse it with SellToSlavery (which auctions the PLAYER
+; via Simple Slavery++): the captor must be a living, non-creature NPC; the target must be a downed
+; player-TEAMMATE (never the player); and the player must be either downed themselves or farther
+; than fSlaveryPlayerDistance — you only lose a follower you couldn't defend.
+Function EnslaveFollower_Execute(Actor akCaptor, Actor akFollower)
+    _Log("[SNBakaACT] EnslaveFollower ENTER")
+    If !bEnabled || !bFollowerSlavery || !akCaptor || !akFollower
+        Return
+    EndIf
+    If !IsFollowerSlaveryInstalled()
+        _Log("[SNBaka] EnslaveFollower: blocked — Follower Slavery Mod not installed/initialized (open its MCM and Install)")
+        Return
+    EndIf
+    If akFollower == PlayerRef || akCaptor == PlayerRef
+        _Log("[SNBaka] EnslaveFollower: blocked — player involved (SellToSlavery is the player path)")
+        Return
+    EndIf
+    If _IsCreatureActor(akCaptor) || _CreatureAnimKey(akCaptor) != "" || akCaptor.IsDead() || _IsDownedAny(akCaptor)
+        _Log("[SNBaka] EnslaveFollower: blocked — captor is a creature, dead, or downed")
+        Return
+    EndIf
+    If !akFollower.IsPlayerTeammate()
+        _Log("[SNBaka] EnslaveFollower: blocked — " + akFollower.GetDisplayName() + " is not a follower of the player")
+        Return
+    EndIf
+    If !_IsDownedAny(akFollower)
+        _Log("[SNBaka] EnslaveFollower: blocked — follower is not downed")
+        Return
+    EndIf
+    If IsActorLocked(akFollower) || IsInSexAnimation(akFollower)
+        _Log("[SNBaka] EnslaveFollower: blocked — follower is mid-interaction/scene")
+        Return
+    EndIf
+    If !_IsDownedAny(PlayerRef) && PlayerRef.GetDistance(akFollower) < fSlaveryPlayerDistance
+        _Log("[SNBaka] EnslaveFollower: blocked — player is up and close enough to intervene (" + PlayerRef.GetDistance(akFollower) + " < " + fSlaveryPlayerDistance + ")")
+        Return
+    EndIf
+    _Log("[SNBaka] EnslaveFollower: " + akCaptor.GetDisplayName() + " enslaves the downed " + akFollower.GetDisplayName())
+    ; Clean OUR entire state off the follower first (Acheron hold, locks, pacify, bonds, ghost) —
+    ; FSM force-moves and re-manages them from here on; two systems must never co-own the actor.
+    _ForceRecover(akFollower)
+    ; Narrate BEFORE the handoff so the LLM knows exactly what happened, to whom, by whom.
+    SkyrimNetApi.RegisterEvent("baka_enslaved", \
+        akCaptor.GetDisplayName() + " binds the beaten " + akFollower.GetDisplayName() + " and drags them away into slavery — they are no longer part of the player's party.", \
+        akCaptor, akFollower)
+    _Notify(akFollower.GetDisplayName() + " has been taken into slavery!")
+    ; FSM's documented external API (fsm_utilityscript.psc): offer the captor as the master, with
+    ; fallback allowed so FSM picks a valid one if the captor doesn't qualify as a master.
+    Int hEnslave = ModEvent.Create("fsm_enslavefollower")
+    If hEnslave
+        ModEvent.PushForm(hEnslave, akFollower)
+        ModEvent.PushForm(hEnslave, akCaptor)
+        ModEvent.PushString(hEnslave, "")
+        ModEvent.PushBool(hEnslave, True)
+        ModEvent.Send(hEnslave)
+        _Log("[SNBaka] EnslaveFollower: fsm_enslavefollower sent (follower=" + akFollower.GetDisplayName() + " master=" + akCaptor.GetDisplayName() + ", fallback allowed)")
+    Else
+        _Log("[SNBaka] EnslaveFollower: ERROR — ModEvent.Create failed, FSM handoff not sent")
+    EndIf
 EndFunction
 
 ; --- Escalate ---
@@ -4523,36 +5483,38 @@ EndFunction
 ; akInitiator must be free (not locked). Sets _bEscalateRequested so
 ; _DefeatGroundWindow proceeds to _DoEscalation.
 Function Escalate_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] Escalate ENTER")
-    Debug.Trace("[SNBaka] Escalate_Execute: initiator=" + akInitiator.GetDisplayName() + " target=" + akTarget.GetDisplayName() + " OnGround=" + StorageUtil.GetIntValue(akTarget, "SNBaka.OnGround", 0) + " InitLocked=" + StorageUtil.GetIntValue(akInitiator, "SNBaka.Locked", 0) + " bNPCCanEscalate=" + bNPCCanEscalate)
+    _Log("[SNBakaACT] Escalate ENTER")
+    _Log("[SNBaka] Escalate_Execute: initiator=" + akInitiator.GetDisplayName() + " target=" + akTarget.GetDisplayName() + " OnGround=" + StorageUtil.GetIntValue(akTarget, "SNBaka.OnGround", 0) + " InitLocked=" + StorageUtil.GetIntValue(akInitiator, "SNBaka.Locked", 0) + " bNPCCanEscalate=" + bNPCCanEscalate)
     If !akTarget || !akInitiator
-        Debug.Trace("[SNBaka] Escalate_Execute: blocked — None actor")
+        _Log("[SNBaka] Escalate_Execute: blocked — None actor")
         Return
     EndIf
     If _IsCreatureActor(akInitiator) || _IsCreatureActor(akTarget)
-        Debug.Trace("[SNBaka] Escalate_Execute: blocked — creature actor (use CreatureEscalate instead)")
+        _Log("[SNBaka] Escalate_Execute: blocked — creature actor (use CreatureEscalate instead)")
         Return
     EndIf
-    If !_TargetSexAllowed(akTarget)
-        Debug.Trace("[SNBaka] Escalate_Execute: blocked — target sex not allowed by MCM (iTargetSex=" + iTargetSex + ")")
+    ; Content-preference filter, not a technical constraint -- same precedent as bNPCCanEscalate below,
+    ; only gates a non-player initiator. The player targeting whoever they want is their own choice.
+    If akInitiator != PlayerRef && !_TargetSexAllowed(akTarget)
+        _Log("[SNBaka] Escalate_Execute: blocked — target sex not allowed by MCM (iTargetSex=" + iTargetSex + ")")
         Return
     EndIf
     Bool ours = StorageUtil.GetIntValue(akTarget, "SNBaka.OnGround", 0) == 1
     Bool external = !ours && _IsDownedAny(akTarget)
     If !ours && !external
-        Debug.Trace("[SNBaka] Escalate_Execute: blocked — target not downed")
+        _Log("[SNBaka] Escalate_Execute: blocked — target not downed")
         Return
     EndIf
     If StorageUtil.GetIntValue(akInitiator, "SNBaka.Locked", 0) == 1
-        Debug.Trace("[SNBaka] Escalate_Execute: blocked — initiator locked")
+        _Log("[SNBaka] Escalate_Execute: blocked — initiator locked")
         Return
     EndIf
     If _IsDownedAny(akInitiator)
-        Debug.Trace("[SNBaka] Escalate_Execute: blocked — initiator is downed")
+        _Log("[SNBaka] Escalate_Execute: blocked — initiator is downed")
         Return
     EndIf
     If akInitiator != PlayerRef && !bNPCCanEscalate
-        Debug.Trace("[SNBaka] Escalate_Execute: blocked — NPC escalation disabled (bNPCCanEscalate=False)")
+        _Log("[SNBaka] Escalate_Execute: blocked — NPC escalation disabled (bNPCCanEscalate=False)")
         Return
     EndIf
     _StartTears(akTarget)
@@ -4560,10 +5522,10 @@ Function Escalate_Execute(Actor akInitiator, Actor akTarget)
         akInitiator.GetDisplayName() + " moves in on the helpless " + akTarget.GetDisplayName() + ".", \
         akInitiator, akTarget)
     If ours
-        Debug.Trace("[SNBaka] Escalate_Execute: accepted — signalling the ground window")
+        _Log("[SNBaka] Escalate_Execute: accepted — signalling the ground window")
         _bEscalateRequested = True       ; our ground window picks this up
     Else
-        Debug.Trace("[SNBaka] Escalate_Execute: accepted — external down, escalating directly")
+        _Log("[SNBaka] Escalate_Execute: accepted — external down, escalating directly")
         _DoEscalation(akInitiator, akTarget)   ; no window of ours -> run it now
     EndIf
 EndFunction
@@ -4578,14 +5540,35 @@ EndFunction
 ;   3 = Stand Back     (exit the window: stagger -> stand up -> regain control)
 ;  <0 = cancel (victim stays downed; window keeps running)
 Function _DispatchDownedAction(Int choice, Actor akCaster, Actor akVictim)
-    Debug.Trace("[SNBaka] _DispatchDownedAction: choice=" + choice + " caster=" + akCaster + " victim=" + akVictim)
+    _Log("[SNBaka] _DispatchDownedAction: choice=" + choice + " caster=" + akCaster + " victim=" + akVictim)
     If !akCaster || !akVictim
         Return
     EndIf
     Bool ours = StorageUtil.GetIntValue(akVictim, "SNBaka.OnGround", 0) == 1
     Bool external = !ours && _IsDownedAny(akVictim)
+    If !ours && !external && akVictim.IsBleedingOut()
+        ; The power's menu opens on native BLEEDOUT, but the Acheron defeat + our adoption net lag it
+        ; by several seconds (confirmed live: HelpUp dispatched at 11:13:09 was ignored as "no longer
+        ; downed" while the bridge only adopted the defeat at 11:13:14 — the player's help did nothing).
+        ; Bridge that gap: the player is pointing at someone visibly on the ground, so wait for the
+        ; down state to actually land before judging whether they're downed.
+        Float settle = 0.0
+        While settle < 8.0 && !_IsDownedAny(akVictim) && akVictim.IsBleedingOut() && !akVictim.IsDead()
+            Utility.Wait(0.5)
+            settle += 0.5
+        EndWhile
+        ours = StorageUtil.GetIntValue(akVictim, "SNBaka.OnGround", 0) == 1
+        external = !ours && _IsDownedAny(akVictim)
+        _Log("[SNBaka] _DispatchDownedAction: bleedout settle wait " + settle + "s -> ours=" + ours + " external=" + external)
+    EndIf
     If !ours && !external
-        Debug.Trace("[SNBaka] _DispatchDownedAction: victim no longer downed — ignoring")
+        If choice == 4
+            ; HelpUp owns its own settle logic (mid-pin lock gap, late-landing bleedout) and re-checks
+            ; everything itself — let it decide instead of silently eating the player's click here.
+            HelpUp_Execute(akCaster, akVictim)
+            Return
+        EndIf
+        _Log("[SNBaka] _DispatchDownedAction: victim no longer downed — ignoring")
         Return
     EndIf
     If ours
@@ -4598,13 +5581,15 @@ Function _DispatchDownedAction(Int choice, Actor akCaster, Actor akVictim)
             _iDownedReplay = 2
         ElseIf choice == 3
             _bStandBack = True
+        ElseIf choice == 4
+            HelpUp_Execute(akCaster, akVictim)   ; _ForceRecover sets _bReleaseRequested, same exit path as Stand Back
         Else
-            Debug.Trace("[SNBaka] _DispatchDownedAction: cancel — victim stays downed")
+            _Log("[SNBaka] _DispatchDownedAction: cancel — victim stays downed")
         EndIf
     Else
-        ; Downed by an external mod/cause (e.g. Surrender) — no window of ours is running, so run the
-        ; action directly with the caster as the actor. (Same functions the window would have called.)
-        Debug.Trace("[SNBaka] _DispatchDownedAction: external down — running choice " + choice + " directly")
+        ; Downed by an external mod/cause (e.g. Surrender, or Acheron) — no window of ours is running, so
+        ; run the action directly with the caster as the actor. (Same functions the window would have called.)
+        _Log("[SNBaka] _DispatchDownedAction: external down — running choice " + choice + " directly")
         If choice == 0
             _DoEscalation(akCaster, akVictim)            ; choke-down -> sex
         ElseIf choice == 1
@@ -4612,9 +5597,17 @@ Function _DispatchDownedAction(Int choice, Actor akCaster, Actor akVictim)
         ElseIf choice == 2
             _DownedReplay(akCaster, akVictim, 2)         ; inspect
         ElseIf choice == 3
-            Debug.Trace("[SNBaka] _DispatchDownedAction: external stand-back — leaving victim to the other mod")
+            ; Was a silent no-op here — "leaving victim to the other mod" never actually freed them,
+            ; since nothing was listening for that comment. Recover them locally, but abFullRescue=False:
+            ; Stand Back is "we step back and let them get up," not "we rescued them" — the earlier fix
+            ; called the same full-rescue path as Help Up, which made Stand Back visibly/mechanically
+            ; indistinguishable from it (Acheron's own RescueActor "saved" treatment firing either way).
+            _ForceRecover(akVictim, False)
+            _Log("[SNBaka] _DispatchDownedAction: external stand-back — recovered directly (no Acheron rescue)")
+        ElseIf choice == 4
+            HelpUp_Execute(akCaster, akVictim)
         Else
-            Debug.Trace("[SNBaka] _DispatchDownedAction: external cancel — victim stays downed")
+            _Log("[SNBaka] _DispatchDownedAction: external cancel — victim stays downed")
         EndIf
     EndIf
 EndFunction
@@ -4624,8 +5617,23 @@ EndFunction
 ; ground. Called from inside _DefeatGroundWindow's wait loop; the loop resets its timer after.
 ; which: 1 = Investigate (Babo_Investigation), 2 = Inspect (Babo_Captured).
 Function _DownedReplay(Actor akA1, Actor akA2, Int which)
-    Debug.Trace("[SNBaka] _DownedReplay: A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName() + " which=" + which)
+    _Log("[SNBaka] _DownedReplay: A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName() + " which=" + which)
     If !akA1 || !akA2 || akA2.IsDead()
+        Return
+    EndIf
+    ; Investigate_Execute/CapturedInspect_Execute (the direct-call entry points for these same two
+    ; actions) both check HasFemaleBody before doing anything -- this replay path, reached from the
+    ; downed-menu's Investigate/Inspect picks (both the "ours" ground-window loop and the "external"/
+    ; Hunter's Pride dispatch), had no such check at all, so it would happily play CapturedBoob/
+    ; CapturedPussy female-specific animation stages on a male victim.
+    ; Same creature-skeleton guard as IsEligible: a falmer/giant aggressor reaching this replay
+    ; (via the downed menu or Hunter's Pride) would play humanoid inspection anims it can't skeleton.
+    If _IsCreatureActor(akA1) || _CreatureAnimKey(akA1) != ""
+        _Log("[SNBaka] _DownedReplay: blocked — creature-skeleton initiator " + akA1.GetDisplayName() + " (humanoid anims only)")
+        Return
+    EndIf
+    If !HasFemaleBody(akA2)
+        _Log("[SNBaka] _DownedReplay: blocked — target is not female")
         Return
     EndIf
 
@@ -4682,7 +5690,7 @@ Function _DownedReplay(Actor akA1, Actor akA2, Int which)
     EndIf
     ; Free the attacker again so they stand back over the downed victim.
     _UnlockAttackerOnly(akA1)
-    Debug.Trace("[SNBaka] _DownedReplay: complete — victim re-downed")
+    _Log("[SNBaka] _DownedReplay: complete — victim re-downed")
 EndFunction
 
 ; ============================================================
@@ -4707,19 +5715,36 @@ String Function _CreatureAnimKey(Actor akCreature)
     EndIf
     If StringUtil.Find(n, "Werewolf") >= 0
         Return "Babo_WerewolfQTE"
-    ElseIf StringUtil.Find(n, "Wolf") >= 0 || StringUtil.Find(n, "Dog") >= 0 || StringUtil.Find(n, "Husky") >= 0 || StringUtil.Find(n, "Fox") >= 0
+    ElseIf StringUtil.Find(n, "Wolf") >= 0 || StringUtil.Find(n, "Dog") >= 0 || StringUtil.Find(n, "Husky") >= 0 || StringUtil.Find(n, "Fox") >= 0 || StringUtil.Find(n, "Hound") >= 0
+        ; "Hound": Death Hounds (DLC1DeathHoundRace) run on the canine skeleton, whose Baka Motion
+        ; animation list registers the Wolf QTE events -- they were undetected before despite the
+        ; animations genuinely supporting them (neither "Wolf" nor "Dog" appears in their race/name).
         Return "Babo_WolfQTE"
-    ElseIf StringUtil.Find(n, "Chaurus Hunter") >= 0
+    ElseIf StringUtil.Find(n, "Chaurus Hunter") >= 0 || StringUtil.Find(n, "ChaurusHunter") >= 0
+        ; Every no-space variant below mirrors the race EditorID convention ("ChaurusHunterRace",
+        ; "DwarvenSpiderRace", "DLC2AshHopperRace"...) -- the spaced form only matches the display
+        ; name, so a RENAMED creature of these types silently fell through to a more generic match
+        ; (or none): a renamed Dwarven Spider hit the plain "Spider" branch and got sent animation
+        ; events its skeleton doesn't even have, which plays nothing on the creature at all.
         Return "Babo_ChaurusHunterQTE"
-    ElseIf StringUtil.Find(n, "Chaurus Reaper") >= 0
+    ElseIf StringUtil.Find(n, "Chaurus Reaper") >= 0 || StringUtil.Find(n, "ChaurusReaper") >= 0
         Return "Babo_ChaurusReaperQTE"
     ElseIf StringUtil.Find(n, "Chaurus") >= 0
         Return "Babo_ChaurusQTE"
-    ElseIf StringUtil.Find(n, "Dwarven Spider") >= 0
+    ElseIf StringUtil.Find(n, "Dwarven Spider") >= 0 || StringUtil.Find(n, "DwarvenSpider") >= 0
         Return "Babo_DwarvenSpiderQTE"
     ElseIf StringUtil.Find(n, "Centurion") >= 0
         Return "Babo_DwarvenCenturionQTE"
     ElseIf StringUtil.Find(n, "Spider") >= 0
+        ; The Baka Motion pack ships three distinct frostbite-spider QTE sets on the same skeleton --
+        ; route the giant and large variants to their own clips instead of always using the base one.
+        ; Checked INSIDE the spider branch so "Giant Frostbite Spider" can never leak into the plain
+        ; "Giant" (humanoid giant) branch below regardless of check order.
+        If StringUtil.Find(n, "Giant") >= 0
+            Return "Babo_GiantSpiderQTE"
+        ElseIf StringUtil.Find(n, "Large") >= 0
+            Return "Babo_LSpiderQTE"
+        EndIf
         Return "Babo_SpiderQTE"
     ElseIf StringUtil.Find(n, "Sabre") >= 0
         Return "Babo_SabrecatQTE"
@@ -4741,7 +5766,7 @@ String Function _CreatureAnimKey(Actor akCreature)
         Return "Babo_GargoyleQTE"
     ElseIf StringUtil.Find(n, "Boar") >= 0
         Return "Babo_BoarQTE"
-    ElseIf StringUtil.Find(n, "Ash Hopper") >= 0
+    ElseIf StringUtil.Find(n, "Ash Hopper") >= 0 || StringUtil.Find(n, "AshHopper") >= 0
         Return "Babo_AshHopperQTE"
     ElseIf StringUtil.Find(n, "Giant") >= 0
         Return "Babo_GiantQTE"
@@ -4752,7 +5777,7 @@ EndFunction
 ; SkyrimNet entry: the LLM (or the player's power) invokes this with the creature + the victim in
 ; either order. We sort out which is the creature and escalate. Creatures are ESCALATE-ONLY.
 Function CreatureEscalate_Execute(Actor akInitiator, Actor akTarget)
-    Debug.Trace("[SNBakaACT] CreatureEscalate ENTER")
+    _Log("[SNBakaACT] CreatureEscalate ENTER")
     If !bCreatureEscalation || !akInitiator || !akTarget
         Return
     EndIf
@@ -4763,52 +5788,209 @@ Function CreatureEscalate_Execute(Actor akInitiator, Actor akTarget)
             creature = akTarget
             victim   = akInitiator
         Else
-            Debug.Trace("[SNBaka] CreatureEscalate: neither actor is a supported creature")
+            _Log("[SNBaka] CreatureEscalate: neither actor is a supported creature")
             Return
         EndIf
     EndIf
     _DoCreatureEscalation(creature, victim)
 EndFunction
 
+; Extended NOT-YET-DOWNED NPC struggle: PlayPairedSequence's own "just play every stage straight
+; through" branch (bResistable=False) was only ever ~3s (2 stages x 1.5s) with zero connection to the
+; outcome rolled afterward -- confirmed feedback from testing: reads as far too quick to be a real
+; struggle, and a non-player victim never got a distinct win/lose animation at all. This holds the
+; shared struggle pose (stage 0) for fCreatureStruggleDuration seconds FIRST, THEN rolls, THEN — only
+; if the victim actually wins — plays the clip's own stage 1 ("break free") briefly before releasing.
+; A creature win has no separate victory stage to show for a 2-stage clip, so it just stays on the
+; struggle pose, which flows straight into _StartSexScene right after this returns.
+; Bypasses PlayPairedSequence entirely (rather than adding a 3rd branch to it) so human-vs-human
+; Struggle, which shares that function, is untouched. Reuses the exact same setup/protection/cleanup
+; calls PlayPairedSequence itself uses (_SetupPair already does StopCombat + Ghost + Pacify + AI-hold +
+; Restrained on both actors, which is the same "ignore outside combat" protection any other paired
+; scene gets — nothing extra needed there for the longer hold).
+; Returns True if the victim escaped.
+Bool Function _PlayCreatureStruggleNPC(Actor akCreature, Actor akVictim, String[] animsA1, String[] animsA2)
+    ObjectReference marker1 = None
+    ObjectReference marker2 = None
+    If XMarkerBase
+        marker1 = akVictim.PlaceAtMe(XMarkerBase, 1, False, False)
+        marker2 = akVictim.PlaceAtMe(XMarkerBase, 1, False, False)
+    EndIf
+    _ProtectNearbyAllies(akVictim, akCreature, True)
+    _SetupPair(akCreature, akVictim, 0.0, 0.0, 0.0, True, marker1, marker2, animsA1[0])
+
+    Bool aborted = _HoldAnim(akCreature, akVictim, animsA1[0], animsA2[0], fCreatureStruggleDuration)
+
+    ; Same rule as the top-level comment on _DoCreatureEscalation: a hit/death/distance-break mid-hold
+    ; frees the victim and resumes the fight, same as it always has -- treat that as an escape rather
+    ; than rolling for an outcome the interruption already decided.
+    Bool escaped = True
+    If aborted
+        _Log("[SNBaka] _PlayCreatureStruggleNPC: aborted mid-struggle (hit/death/distance) -- counts as escaped")
+    Else
+        escaped = Utility.RandomInt(1, 100) > iCreatureSuccessPct
+        _Log("[SNBaka] _PlayCreatureStruggleNPC: struggle held " + fCreatureStruggleDuration + "s, escaped=" + escaped)
+        If escaped
+            Debug.SendAnimationEvent(akCreature, animsA1[1])
+            Debug.SendAnimationEvent(akVictim, animsA2[1])
+            Utility.Wait(1.5)
+        EndIf
+    EndIf
+
+    _ProtectNearbyAllies(akVictim, akCreature, False)
+    _CleanupPair(akCreature, akVictim, marker1, marker2, False, False)
+    ; Same post-escape grace the player QTE path gets (see PlayPairedSequence) -- an NPC victim who
+    ; broke free was equally getting instantly re-hit the moment the cleanup un-ghosted her.
+    If escaped
+        _PostEscapeGrace(akVictim)
+    EndIf
+    Return escaped
+EndFunction
+
+; Group escalation (2v1/3v1): finds up to (iCreatureGroupMaxSize - 1) OTHER actors of the SAME
+; creature type as akAnchor, near akVictim, to join the scene. akAnchor works as the anchor whether it
+; just WON its own 1v1 struggle or was simply the single candidate _TryCreatureEscalateOnDowned found
+; for a victim already downed by plain combat (no struggle happened) -- either way, this only asks
+; "who else of its kind is nearby to join", which is the same question regardless of how the anchor
+; itself got here.
+; One scan (not separate "try 3, try 2, try 1" passes) collecting whatever's available and capping at
+; the max -- functionally the same "biggest available group, gracefully smaller if not" result without
+; wastefully re-scanning per size tier. Plus a single cross-cell supplement (same FindClosestActorFromRef
+; technique used everywhere else this blind spot shows up) if the same-cell sweep didn't fill both
+; slots -- confirmed in testing that group scenes never formed at all, always landing on the same-cell-
+; only limitation this function originally shipped with (dungeon dens are almost always split across
+; linked cells, same as every other search in this file that had to learn this the hard way).
+; Papyrus array sizes must be compile-time literals (no "new Actor[count]") -- always returns a fixed
+; 2-slot array, unused slots left None, instead of a dynamically-sized result. Callers check each slot.
+Actor[] Function _FindGroupCompanions(Actor akAnchor, Actor akVictim)
+    Actor[] slots = new Actor[2]
+    Int wanted = iCreatureGroupMaxSize - 1
+    If wanted <= 0 || !akAnchor || !akVictim
+        Return slots
+    EndIf
+    String animKey = _CreatureAnimKey(akAnchor)
+    Int count = 0
+    ; LOADED-AREA enumeration (po3 Papyrus Extender), same as _TryCreatureEscalateOnDowned's scan and
+    ; for the same confirmed reason: cell sweeps miss packmates registered in linked cells, which is
+    ; why every group scene came out 1v1. Every same-type creature logs its rejection reason so the
+    ; log always explains why a group did or didn't form.
+    If animKey != ""
+        Actor[] loaded = PO3_SKSEFunctions.GetActorsByProcessingLevel(0)
+        Int n = loaded.Length
+        Int i = 0
+        While i < n && count < wanted && count < 2
+            Actor a = loaded[i]
+            If a && a != akAnchor && a != akVictim && a != slots[0] && !a.IsDead() && _CreatureAnimKey(a) == animKey
+                ; !_HasLiveCombatTarget: same rule the ANCHOR gets ("don't pull it out of a real
+                ; fight"); a target that's downed/dead doesn't count as a real fight anymore.
+                If IsActorLocked(a)
+                    _Log("[SNBaka] _FindGroupCompanions: skipping " + a.GetDisplayName() + " — locked (mid-interaction)")
+                ElseIf _IsDownedAny(a)
+                    _Log("[SNBaka] _FindGroupCompanions: skipping " + a.GetDisplayName() + " — downed")
+                ElseIf _HasLiveCombatTarget(a)
+                    _Log("[SNBaka] _FindGroupCompanions: skipping " + a.GetDisplayName() + " — still fighting " + a.GetCombatTarget().GetDisplayName())
+                ElseIf a.GetDistance(akVictim) > 1500.0
+                    _Log("[SNBaka] _FindGroupCompanions: skipping " + a.GetDisplayName() + " — too far (" + a.GetDistance(akVictim) + ")")
+                Else
+                    slots[count] = a
+                    _Log("[SNBaka] _FindGroupCompanions: found companion " + a.GetDisplayName())
+                    count += 1
+                EndIf
+            EndIf
+            i += 1
+        EndWhile
+    EndIf
+    _Log("[SNBaka] _FindGroupCompanions: " + count + " companion(s) found (wanted " + wanted + ", key=" + animKey + ")")
+    Return slots
+EndFunction
+
+; Setup/teardown for a GROUP companion (not the anchor -- that already gets the full _SetupPair
+; treatment). Same ghost/restrained/dontmove/AI-hold profile so it can't wander off, get hurt, or
+; interfere, but no positioning: OStim/SexLab's own scene engine places every actor once handed a
+; scene ID that actually supports this many participants.
+Function _PrepGroupCompanion(Actor a, Bool abPrep)
+    If !a
+        Return
+    EndIf
+    If abPrep
+        a.StopCombat()
+        a.StopCombatAlarm()
+        SNBakaUI.SetNoCollision(a, True)
+        a.SetGhost(True)
+        _HoldActorAI(a, True)
+        a.SetRestrained(True)
+        a.SetDontMove(True)
+        _Log("[SNBaka] _PrepGroupCompanion: prepped " + a.GetDisplayName())
+    Else
+        a.SetRestrained(False)
+        a.SetDontMove(False)
+        a.SetGhost(False)
+        SNBakaUI.SetNoCollision(a, False)
+        _HoldActorAI(a, False)
+        a.EvaluatePackage()
+        _Log("[SNBaka] _PrepGroupCompanion: released " + a.GetDisplayName())
+    EndIf
+EndFunction
+
 ; The engine: play the creature-matched paired anim, decide the outcome, then start the creature sex
-; scene on the chosen backend. PC victim -> QTE; NPC -> 100% if already downed, else iCreatureSuccessPct.
+; scene on the chosen backend. PC victim -> QTE; NPC -> iCreatureSuccessPct roll either way (downed or not).
 ; A hit puts an actor back in combat, which aborts the paired anim (existing _ShouldAbort) AND blocks
 ; the scene below — so getting hit frees the victim and resumes the fight.
 Function _DoCreatureEscalation(Actor akCreature, Actor akVictim)
-    Debug.Trace("[SNBaka] _DoCreatureEscalation ENTER: creature=" + akCreature + " victim=" + akVictim)
+    _Log("[SNBaka] _DoCreatureEscalation ENTER: creature=" + akCreature + " victim=" + akVictim)
     If !bCreatureEscalation || !akCreature || !akVictim
-        Debug.Trace("[SNBaka] CreatureEscalate: blocked — escOff/none (esc=" + bCreatureEscalation + ")")
+        _Log("[SNBaka] CreatureEscalate: blocked — escOff/none (esc=" + bCreatureEscalation + ")")
         Return
     EndIf
     If akVictim == PlayerRef && !bCreatureOnPlayer
-        Debug.Trace("[SNBaka] CreatureEscalate: blocked — player victim, bCreatureOnPlayer OFF")
+        _Log("[SNBaka] CreatureEscalate: blocked — player victim, bCreatureOnPlayer OFF")
         Return
     EndIf
     Bool vFemale = akVictim.GetActorBase().GetSex() == 1
     ; iCreatureVictimSex: 0 = Both (allow all), 1 = Female only, 2 = Male only (same scheme as iTargetSex).
     If (iCreatureVictimSex == 1 && !vFemale) || (iCreatureVictimSex == 2 && vFemale)
-        Debug.Trace("[SNBaka] CreatureEscalate: blocked — victim sex not allowed by MCM")
+        _Log("[SNBaka] CreatureEscalate: blocked — victim sex not allowed by MCM (iCreatureVictimSex=" + iCreatureVictimSex + " victimFemale=" + vFemale + ")")
         Return
     EndIf
     String base = _CreatureAnimKey(akCreature)
     If base == ""
-        Debug.Trace("[SNBaka] CreatureEscalate: blocked — no creature anim key for " + akCreature.GetDisplayName())
+        _Log("[SNBaka] CreatureEscalate: blocked — no creature anim key for " + akCreature.GetDisplayName())
+        Return
+    EndIf
+    ; Mid-sex-scene actors are untouchable for paired animations — OStim/SexLab threads from ANY mod
+    ; (our own Locked flag only marks ours). Same explicit spec as IsEligible's twin check.
+    If IsInSexAnimation(akVictim) || IsInSexAnimation(akCreature)
+        _Log("[SNBaka] CreatureEscalate: blocked — a participant is mid sex scene (" + akCreature.GetDisplayName() + " -> " + akVictim.GetDisplayName() + ")")
         Return
     EndIf
     Bool downed = _IsDownedAny(akVictim)
     If !downed && !bCreatureCombatAllowed
-        Debug.Trace("[SNBaka] CreatureEscalate: blocked — victim not downed and mid-combat escalation disabled")
+        _Log("[SNBaka] CreatureEscalate: blocked — victim not downed and mid-combat escalation disabled")
         Return
     EndIf
     If IsActorLocked(akCreature) || IsActorLocked(akVictim)
-        Debug.Trace("[SNBaka] CreatureEscalate: blocked — actor already locked (creature=" + IsActorLocked(akCreature) + " victim=" + IsActorLocked(akVictim) + ")")
+        _Log("[SNBaka] CreatureEscalate: blocked — actor already locked (creature=" + IsActorLocked(akCreature) + " victim=" + IsActorLocked(akVictim) + ")")
         Return
     EndIf
     If !LockBoth(akCreature, akVictim)
-        Debug.Trace("[SNBaka] CreatureEscalate: blocked — LockBoth failed")
+        _Log("[SNBaka] CreatureEscalate: blocked — LockBoth failed")
         Return
     EndIf
-    Debug.Trace("[SNBaka] CreatureEscalate: locked + starting anim, base=" + base + " downed=" + downed)
+    ; Only now, with the pairing actually committed (every rejection gate above already passed), clear
+    ; the Acheron hold/OnGround so the creature anim can position the victim properly. Used to happen in
+    ; the CALLER (_TryCreatureEscalateOnDowned) before any of these gates ran, which meant a candidate
+    ; rejected by one of them (wrong sex, no anim key, already locked, etc.) still had their downed state
+    ; silently wiped for nothing — neither still tracked as down nor actually recovered/stood up.
+    ; USER-SPEC (the OSimpleDefeat pattern, extended to struggles): a downed victim is NOT lifted out
+    ; of Acheron for the pin/QTE — they stay defeated straight through grab -> struggle -> scene ->
+    ; re-down, one unbroken protection. Acheron's defeat is the one state that never leaked; every
+    ; rescue-to-animate variant opened the exact window enemies kept aggroing through. Acheron lifts
+    ; ONLY when the victim genuinely stands — QTE win / HelpUp / the get-up key — each already wrapped
+    ; in the mercy grace (fEscapeGraceDuration) against spawn-kills. The paired anim events drive the
+    ; graph over the down pose directly; not-downed victims (mid-combat grapples) are unaffected.
+    _ProtectVictimTargeting(akVictim)
+    StorageUtil.SetIntValue(akVictim, "SNBaka.OnGround", 0)
+    _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): locked + starting anim, base=" + base + " downed=" + downed)
     RecordAnimation(akVictim, "CreatureEscalate", akCreature.GetDisplayName())
     _CueOngoing("baka_forced", \
         akCreature.GetDisplayName() + " pins " + akVictim.GetDisplayName() + " down and forces itself on them.", \
@@ -4825,36 +6007,410 @@ Function _DoCreatureEscalation(Actor akCreature, Actor akVictim)
     a2[0] = base + "_S01_A01"
     a2[1] = base + "_S02_A01"
 
-    Bool resist = (akVictim == PlayerRef)   ; player always gets the QTE
-    _bQTEDefeated = False
-    PlayPairedSequence(akCreature, akVictim, 0.0, 0.0, 0.0, a1, a2, fSequenceStageTimer, resist)
-
     Bool succeed = False
     If akVictim == PlayerRef
+        ; FREEZE BYSTANDERS for the whole QTE, not just the scene prep afterwards. The player victim
+        ; isn't Acheron-pacified (native player lockdown — camera), so the OTHER giants re-aggroed the
+        ; instant the rescue freed them and kept the combat flag live through the QTE — which then made
+        ; the scene gate refuse, re-down, re-escalate: the reported infinite loop. Holding every nearby
+        ; actor's AI is what actually eliminates combat toward the pair; the scene path re-holds
+        ; idempotently, and every exit (scene end, no-scene, refusal) releases.
+        _ProtectNearbyAllies(akVictim, akCreature, True)
+        ; Real interactive QTE -- unchanged.
+        _bQTEDefeated = False
+        ; A dedicated, shorter stage timer here (not fSequenceStageTimer) — that 4.0s default is tuned
+        ; for the 5-stage human Struggle sequence, where finishing out the current stage after a QTE
+        ; resolves is a small fraction of the whole. This creature sequence only has 2 stages, so the
+        ; same 4.0s trailing wait after the outcome is already known is most of the sequence's total
+        ; length — confirmed in testing as a visible "still animating" hang after the QTE clearly ended.
+        PlayPairedSequence(akCreature, akVictim, 0.0, 0.0, 0.0, a1, a2, 1.5, True)
         succeed = _bQTEDefeated             ; creature won the QTE
         _bQTEDefeated = False
-    ElseIf downed
-        succeed = True                      ; already defeated -> guaranteed
+        If succeed
+            ; USER-SPEC redesign (every hand-rolled protection kept losing to combat AI): the instant
+            ; the QTE is lost, hand the victim STRAIGHT to Acheron — its native defeat is the one
+            ; state that provably stops all targeting ("downed victims are never attacked"). The
+            ; entire scene prep below now runs with the victim safely parked down; they're rescued
+            ; back out at the last possible moment, directly into the scene.
+            StorageUtil.SetFormValue(akVictim, "SNBaka.GroundWindowAggressor", akCreature)
+            _DelegateDownToAcheron(akVictim)
+            _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): QTE lost — victim parked in Acheron for the prep window")
+        EndIf
     Else
-        succeed = Utility.RandomInt(1, 100) <= iCreatureSuccessPct
+        ; NPC victim, downed or mid-combat: a REAL drawn-out struggle either way — _PlayCreatureStruggleNPC
+        ; holds the pin pose fCreatureStruggleDuration seconds (MCM-tunable), THEN rolls
+        ; iCreatureSuccessPct, THEN plays the break-free stage only on an actual escape. The
+        ; already-downed case used to skip this for an instant roll + one ~1.5s stage — explicit
+        ; feedback: "gets decided within seconds", hold the struggle 10-20s like the mid-combat case
+        ; before deciding. Same roll odds as the old quick path (escaped = roll > pct ≡ succeed = roll <= pct).
+        Bool escaped = _PlayCreatureStruggleNPC(akCreature, akVictim, a1, a2)
+        succeed = !escaped
+    EndIf
+
+    ; Establish the anti-re-aggro relationship (same fix as the bandit re-aggro bug) as soon as we know
+    ; the outcome, regardless of whether a scene actually starts right away.
+    If succeed
+        ; Re-calm the WINNER in the same beat — _CleanupPair (inside the paired sequence that just
+        ; ended) restored its aggression, and the scene path's own re-pacify is seconds away. That gap
+        ; is exactly when "the giant that escalated on me attacked me while going to OStim" (confirmed
+        ; report). Idempotent with the scene path's later call; every no-scene exit re-downs the victim
+        ; with GroundWindowAggressor tracked, so recovery restores the creature's aggression properly.
+        _PacifyActor(akCreature, True)
+        akCreature.SetRelationshipRank(akVictim, 4)
+        If akVictim != PlayerRef
+            akVictim.SetRelationshipRank(akCreature, 4)
+        EndIf
+        _StampDefeatGrace(akVictim)
+        Utility.Wait(0.3)
     EndIf
 
     ; CRE-3: the creature STRUGGLE (above) can bring a victim down mid-combat, but the creature SEX only
-    ; starts once the fight is fully over near the victim (same gate as human Escalate). Otherwise the
-    ; struggle just leaves her downed and the fight continues.
-    Debug.Trace("[SNBaka] CreatureEscalate: outcome succeed=" + succeed + " combatNear=" + _CombatNear(akVictim, fCombatOverRadius))
-    If succeed && !_CombatNear(akVictim, fCombatOverRadius)
-        Debug.Trace("[SNBaka] CreatureEscalate: STARTING creature sex scene (backend=" + iCreatureBackend + ")")
-        Actor[] sexActors = new Actor[2]
+    ; waits for the fight to clear when the victim is the PLAYER (same gate as human Escalate) -- the
+    ; player has their own agency in an ongoing fight, so starting a scene on them mid-chaos is the one
+    ; case actually worth holding off on. An NPC victim (e.g. Joylie) gets claimed the instant the
+    ; creature wins, exactly like the falmer case that already worked this way -- explicit call: don't
+    ; leave her tracked-down-and-waiting through however long the rest of the fight takes just because
+    ; OTHER combatants are still swinging at each other nearby. If the scene starts into active combat
+    ; and something hits either participant, the existing mid-scene abort (_HasLiveCombatTarget below)
+    ; already force-stops it cleanly -- that's the accepted tradeoff for not waiting.
+    If succeed && akVictim == PlayerRef
+        ; Victim is parked in Acheron (QTE-loss delegate above) — give the pack a beat to natively
+        ; disengage from the downed body BEFORE judging whether combat blocks the scene. Trimmed from
+        ; 3.0s: post-QTE pacing read as "very long to decide next steps" (confirmed feedback), and the
+        ; park means a slightly-early judgment just re-tries rather than exposing anyone.
+        Utility.Wait(1.5)
+    EndIf
+    Bool combatGateBlocks = akVictim == PlayerRef && _CombatNear(akVictim, fCombatOverRadius)
+    _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): outcome succeed=" + succeed + " combatGateBlocks=" + combatGateBlocks + " sceneAllowed=" + bCreatureSceneAllowed)
+    If succeed && !combatGateBlocks && bCreatureSceneAllowed
+        ; PlayPairedSequence's own cleanup (CleanupPair) already un-pacified the creature and gave its
+        ; aggression back the moment the struggle ended -- only re-pacify it (which is what actually
+        ; calls StopCombat, only on the creature) NOW, immediately before actually claiming the victim
+        ; for a scene, not the instant the struggle resolved. Confirmed real bug from testing ("draugr
+        ; stuck" mid-fight, generalizes to every creature type since this code path is shared): pacifying
+        ; unconditionally on any win left the creature frozen -- unable to fight ANYONE, not just the
+        ; victim -- for however long it took the victim's OWN recovery cycle to happen to un-pacify it
+        ; as a side effect, whenever the fight wasn't actually over yet (the "NO scene" branch below).
+        ; That could be a long, open-ended wait in an active multi-enemy fight. _ForceRecover/Acheron's
+        ; _Recover un-pacify whatever's tracked as SNBaka.GroundWindowAggressor on real recovery, so this
+        ; still gets undone properly once the scene (and thus the victim's hold) actually ends.
+        _PacifyActor(akCreature, True)
+        ; FREEZE BYSTANDERS FIRST, before anything else on the scene path -- this used to run only
+        ; AFTER _StartSexScene returned, which left the whole prep window (group scan, companion prep,
+        ; OStim thread spin-up) open for a nearby enemy to re-aggro and hit the victim. Confirmed real
+        ; CRASH from testing: a second falmer re-aggroed the player exactly in that window, re-downing
+        ; them WHILE OStim was starting its thread -- OStim is unstable with a player actor entering
+        ; combat mid-start. Holding every nearby actor's AI before the prep even begins closes the
+        ; window at its source.
+        _ProtectNearbyAllies(akVictim, akCreature, True)
+        ; Group size decided HERE, only once we know we actually need a scene -- a struggle that fails
+        ; or a combat-not-clear outcome above never wastes this scan. Papyrus array sizes must be
+        ; compile-time literals, so build one of exactly three fixed shapes instead of a dynamic size.
+        Actor[] companions = _FindGroupCompanions(akCreature, akVictim)
+        Actor comp1 = companions[0]
+        Actor comp2 = companions[1]
+        If comp1
+            _PrepGroupCompanion(comp1, True)
+        EndIf
+        If comp2
+            _PrepGroupCompanion(comp2, True)
+        EndIf
+        ; LAST-MOMENT re-check, after the prep and with bystanders held: did combat re-flare on the
+        ; victim during the gap between the outcome trace above and here? The AI-hold above can't stop
+        ; a hit that already landed mid-prep (or an actor outside the hold's reach), and starting the
+        ; OStim thread anyway in that state is the confirmed crash. Bail to the same "leave them
+        ; downed" outcome the combat-gate branch below already uses -- the retry pipeline picks the
+        ; victim up again once things settle.
+        If _HasLiveCombatTarget(akVictim) || (akVictim == PlayerRef && _CombatNear(akVictim, fCombatOverRadius))
+            _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): combat re-flared during scene prep — aborting scene start, leaving victim downed")
+            _ProtectNearbyAllies(akVictim, akCreature, False)
+            If comp1
+                _PrepGroupCompanion(comp1, False)
+            EndIf
+            If comp2
+                _PrepGroupCompanion(comp2, False)
+            EndIf
+            StorageUtil.SetFormValue(akVictim, "SNBaka.GroundWindowAggressor", akCreature)
+            _DelegateDownToAcheron(akVictim)
+            UnlockBoth(akCreature, akVictim)
+            Return
+        EndIf
+        Actor[] sexActors
+        If comp1 && comp2
+            sexActors = new Actor[4]
+            sexActors[2] = comp1
+            sexActors[3] = comp2
+        ElseIf comp1
+            sexActors = new Actor[3]
+            sexActors[2] = comp1
+        Else
+            sexActors = new Actor[2]
+        EndIf
         sexActors[0] = akCreature
         sexActors[1] = akVictim
-        _StartSexScene(sexActors, akVictim, akCreature, "", "aggressive", iCreatureBackend)
+        ; GROUP-SIZE FALLBACK (explicit spec: "first 3 creatures, if not found 2, then 1"): animation
+        ; packs often ship PAIR scenes for a creature type but nothing bigger — confirmed live with
+        ; rieklings: the 4-actor pick found nothing, the scene was refused, and the retry pipeline
+        ; re-grabbed the same victims every ~20s forever. Shrink until a scene exists.
+        If iCreatureBackend == 2
+            String pickTest = _PickOStimScene(sexActors, "aggressive")
+            While pickTest == "" && sexActors.Length > 2
+                Actor droppedComp
+                If sexActors.Length == 4
+                    droppedComp = comp2
+                    comp2 = None
+                    sexActors = new Actor[3]
+                    sexActors[2] = comp1
+                Else
+                    droppedComp = comp1
+                    comp1 = None
+                    sexActors = new Actor[2]
+                EndIf
+                sexActors[0] = akCreature
+                sexActors[1] = akVictim
+                If droppedComp
+                    _PrepGroupCompanion(droppedComp, False)
+                EndIf
+                _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): no animation at that group size — retrying with " + sexActors.Length + " actors")
+                pickTest = _PickOStimScene(sexActors, "aggressive")
+            EndWhile
+            If pickTest == ""
+                ; Not even a PAIR animation exists for this creature type — a permanent content gap.
+                ; Unwind like the refused-scene branch AND back this victim's pipeline off hard, or the
+                ; grab->refuse->re-down loop hammers them every throttle window (the riekling report).
+                _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): NO OStim animation exists even for a pair with " + akCreature.GetDisplayName() + " — unwinding, 5-minute creature backoff for this victim")
+                StorageUtil.SetFloatValue(akVictim, "SNBaka.LastCreatureAttemptRT", Utility.GetCurrentRealTime() + 300.0)
+                _ProtectNearbyAllies(akVictim, akCreature, False)
+                If comp1
+                    _PrepGroupCompanion(comp1, False)
+                EndIf
+                Debug.SendAnimationEvent(akCreature, "staggerStart")
+                Utility.Wait(0.3)
+                Debug.SendAnimationEvent(akCreature, "IdleForceDefaultState")
+                akCreature.EvaluatePackage()
+                akVictim.SetGhost(False)
+                StorageUtil.SetFormValue(akVictim, "SNBaka.GroundWindowAggressor", akCreature)
+                _DelegateDownToAcheron(akVictim)
+                UnlockBoth(akCreature, akVictim)
+                Return
+            EndIf
+        EndIf
+        ; The VICTIM is untouchable for the scene's whole duration, same rule as the struggle phase
+        ; (_SetupPair) and the human scene path (_EscalationCleanup): the aggressor's own faction
+        ; allies won't kill its prey — a stray ally hit whiffs instead of staggering the animation or
+        ; feeding OStim a combat transition mid-thread. The CREATURE stays hittable on purpose: a
+        ; genuine hit on IT (a rescuer interceding) is what's allowed to break the scene below.
+        akVictim.SetGhost(True)
+        ; Ghost stops the hits LANDING, but attackers still kept swinging at her for the whole scene
+        ; (confirmed report). Acheron's pacify makes combat IGNORE her outright ("ignoring & ignored
+        ; by combat" per its API) — they drop her as a target instead of whiffing forever. Scene-scoped:
+        ; released right after the wait loop; the post-scene re-down (DefeatActor) re-pacifies her
+        ; through Acheron's own defeat state anyway.
+        _ProtectVictimTargeting(akVictim)
+        ; PLAYER scenes: let the animation graph + control restore from the paired QTE finish settling
+        ; before OStim builds its player thread. Confirmed CTD (11:15:03 crash log): OStim's AlignMenu
+        ; dereferenced a null thread during scene start exactly 1s after CleanupPair re-enabled player
+        ; controls — an OStim-internal race we can only starve, not fix. The final combat CTD guard
+        ; inside _StartSexScene runs AFTER this wait, so nothing sneaks past it during the pause.
+        If akVictim == PlayerRef
+            Utility.Wait(1.0)   ; trimmed from 2.0 — the park makes scene-start state far more stable than the AlignMenu-crash era
+        EndIf
+        ; The PLAYER stays Acheron-defeated straight through the scene (OSimpleDefeat pattern —
+        ; confirmed working live: 'BillyyGiantStandingService-4' ran with victimStillDowned=TRUE).
+        ; A defeated NPC is a different story: OStim REJECTS them at thread start (confirmed live:
+        ; Joylie's thread got 'actors array was None' and died within the same second — the giant
+        ; just walked off). NPCs get the KEEP-PACIFIED rescue instead: the defeat ends, Acheron's
+        ; pacify carries over seamlessly (RescueActor abRelease=false), zero targetable gap.
+        If akVictim != PlayerRef && _IsDownedAny(akVictim)
+            _ClearAcheronHold(akVictim, True, True)
+            Utility.Wait(0.3)
+        EndIf
+        ; The SCENE ACTORS themselves get Acheron's two-way pacify for the scene's duration —
+        ; "aggressors mid-animation must be pacified against ANYONE" (confirmed report: the giant on
+        ; Claudia acquired the freshly-liberated Joylie as a combat target mid-scene, which tripped
+        ; the abort rule and killed the animation). Ignoring & ignored: they can't acquire targets and
+        ; nobody targets them. Released right after the wait loop. Known trade-off, per explicit
+        ; direction: intercession-by-hit won't break a creature scene anymore (a pacified creature
+        ; never re-targets its attacker, so the abort rule can't see the fight).
+        If StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Present", 0) == 1
+            Acheron.PacifyActor(akCreature)
+            If comp1
+                Acheron.PacifyActor(comp1)
+            EndIf
+            If comp2
+                Acheron.PacifyActor(comp2)
+            EndIf
+        EndIf
+        _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): STARTING creature sex scene (backend=" + iCreatureBackend + ", group size=" + sexActors.Length + ", victimStillDowned=" + _IsDownedAny(akVictim) + ")")
+        ; Narrative parity for NPC victims (confirmed feedback: "for other npcs, llm do not get as many
+        ; cues as with the player... sometimes it's a bit lost"): the LLM heard the pin start but NOT
+        ; that the claim actually proceeded to a scene. Same eventType the pin cue used.
+        SkyrimNetApi.RegisterEvent("baka_forced", \
+            akCreature.GetDisplayName() + " overpowers the helpless " + akVictim.GetDisplayName() + " completely and claims them right there on the ground.", \
+            akCreature, akVictim)
+        Int stid = _StartSexScene(sexActors, akVictim, akCreature, "", "aggressive", iCreatureBackend)
+        If stid < 0
+            ; Scene never started (CTD-guard refusal or OStim failure). This return value used to be
+            ; ignored: we fell into the wait loop for a scene that didn't exist and left the creature
+            ; looping its pin animation FOREVER (confirmed 15:40:44 log — "REFUSED" then "entering wait
+            ; loop"). Unwind like the combat-re-flare bail above, plus the explicit creature pose
+            ; liberation the escape branch uses (IdleForceDefaultState alone doesn't reliably break a
+            ; creature out of a paired pose). The victim stays Acheron-pacified into the re-down, so
+            ; there's no targetable gap; ghost comes off because downed = vanilla mortality by design.
+            _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): scene never started (tid=" + stid + ") — unwinding, victim re-downed, creature pose reset")
+            _ProtectNearbyAllies(akVictim, akCreature, False)
+            If comp1
+                _PrepGroupCompanion(comp1, False)
+            EndIf
+            If comp2
+                _PrepGroupCompanion(comp2, False)
+            EndIf
+            Debug.SendAnimationEvent(akCreature, "staggerStart")
+            Utility.Wait(0.3)
+            Debug.SendAnimationEvent(akCreature, "IdleForceDefaultState")
+            akCreature.EvaluatePackage()
+            akVictim.SetGhost(False)
+            StorageUtil.SetFormValue(akVictim, "SNBaka.GroundWindowAggressor", akCreature)
+            _DelegateDownToAcheron(akVictim)
+            UnlockBoth(akCreature, akVictim)
+            Return
+        EndIf
+        _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): _StartSexScene returned, entering wait loop")
+        ; Wait for the scene to actually END before touching anything — this used to fall straight
+        ; through to UnlockBoth the instant the scene was merely KICKED OFF, releasing the lock while
+        ; OStim/SexLab was still mid-animation (the same "two systems fighting over one actor mid-scene"
+        ; hazard _EscalationCleanup's own wait exists to avoid, on the human Escalate path).
+        Utility.Wait(2.0)
+        Int waited = 0
+        Bool sceneCut = False
+        ; Force-stop only when a REAL fight reaches the creature -- same refined rule as _ShouldAbort
+        ; and the human scene path: combat STATE alone (its own faction alarm reacting to an ally
+        ; attacking this very victim) doesn't count; only a live, non-downed combat target OTHER than
+        ; the scene's own victim does -- that's what a genuine interceding hit produces (the creature's
+        ; target switches to whoever hit it). A falmer does not kill another falmer's prey; an
+        ; adventurer attacking the falmer very much still breaks the scene. The victim side isn't
+        ; checked at all: they're ghosted above, nothing can land on them.
+        While IsInSexAnimation(akVictim) && waited < 900 && !sceneCut   ; 15min hard cap, same as the human path
+            Actor crT = akCreature.GetCombatTarget()
+            If akCreature.IsInCombat() && crT && crT != akVictim && !crT.IsDead() && !crT.IsDisabled() && !_IsDownedAny(crT)
+                _Log("[SNBaka] CreatureEscalate: " + akCreature.GetDisplayName() + " is in a real fight against " + crT.GetDisplayName() + " mid-scene — force-stopping")
+                _StopSexScene(akVictim)
+                sceneCut = True
+            Else
+                Utility.Wait(1.0)
+                waited += 1
+            EndIf
+        EndWhile
+        _ProtectNearbyAllies(akVictim, akCreature, False)
+        ; End the scene-scoped two-way pacify on the scene actors (mirrors the PacifyActor calls at
+        ; scene start). The aggressor's ONE-WAY pacify (_PacifyActor: aggression 0) stays until the
+        ; victim's recovery un-pacifies the tracked threat, same as always.
+        If StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Present", 0) == 1
+            Acheron.ReleaseActor(akCreature)
+            If comp1
+                Acheron.ReleaseActor(comp1)
+            EndIf
+            If comp2
+                Acheron.ReleaseActor(comp2)
+            EndIf
+        EndIf
+        ; Scene over: hold the ghost a few MERCY seconds more before dropping it (no spawn-kills the
+        ; frame the protection ends), THEN release the scene-scoped pacify. The downed state that
+        ; follows has no protection of its own by design -- vanilla mortality.
+        _PostEscapeGrace(akVictim)   ; also ends the scene-scoped pacify; the re-down below re-pacifies via DefeatActor
+        If comp1
+            _PrepGroupCompanion(comp1, False)
+        EndIf
+        If comp2
+            _PrepGroupCompanion(comp2, False)
+        EndIf
+        ; RE-DOWN after the creature scene, same as the human Escalate flow's _EscalationCleanup —
+        ; missing here entirely before, which is why a victim just stood back up the moment a creature
+        ; scene ended, with the creature possibly still standing right there and nothing checking for it.
+        ; Re-track the creature as the aggressor for the renewed down cycle (GetCombatTarget() would find
+        ; nothing, combat's long since stopped).
+        If akVictim && !akVictim.IsDisabled()
+            ; Clean graph reset BEFORE the re-down — OStim's own post-scene reset is async, and the
+            ; expression addons fight the skeleton at this exact moment (OSED's broken node cleanup,
+            ; see the error storm in the log). DefeatActor's collapse starting from a dirty graph is
+            ; the intermittent "did not animate correctly after the scene" (frozen/odd pose instead
+            ; of a collapse). Reset first, give the graph a beat, THEN hand them down.
+            Debug.SendAnimationEvent(akVictim, "IdleForceDefaultState")
+            Utility.Wait(0.5)
+            StorageUtil.SetFormValue(akVictim, "SNBaka.GroundWindowAggressor", akCreature)
+            _DelegateDownToAcheron(akVictim)
+            ; POSE ENFORCEMENT: the delegate is async, and a graph fresh out of OStim regularly eats
+            ; the native collapse — "defeated but just standing there, not moving" (confirmed report,
+            ; still occurring after the pre-delegate reset alone). Give the defeat a beat to land,
+            ; then force the vanilla bleedout pose; redundant when the native collapse took.
+            If akVictim != PlayerRef
+                Utility.Wait(1.5)
+                If !akVictim.IsDead()
+                    Debug.SendAnimationEvent(akVictim, "BleedoutStart")
+                    _Log("[SNBaka] post-scene re-down: BleedoutStart enforced on " + akVictim.GetDisplayName())
+                EndIf
+            EndIf
+        EndIf
     Else
-        Debug.Trace("[SNBaka] CreatureEscalate: NO scene — succeed/combat gate failed (see outcome line above)")
+        _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): NO scene — succeed/combat gate failed (see outcome line above)")
+        _ProtectNearbyAllies(akVictim, akCreature, False)   ; QTE-phase bystander hold ends here on the no-scene path
         ; Struggle WON but the fight's still on: leave her DOWNED (Acheron) so a beast can finish once
         ; combat ends, instead of starting sex mid-combat. If she escaped (not succeed), normal outcome.
-        If succeed && akVictim != PlayerRef
+        ; Applies to the player too now — skipping it there was the exact bug that let a struggled-down
+        ; PC just stand back up mid-combat instead of staying tracked as downed.
+        If succeed
+            StorageUtil.SetFormValue(akVictim, "SNBaka.GroundWindowAggressor", akCreature)
             _DelegateDownToAcheron(akVictim)
+        Else
+            ; Victim BROKE FREE — winning the struggle is a genuine LIBERATION for everyone (updated
+            ; spec: "Joylie won and she should have been liberated from all states and be free to
+            ; attack back, and the giant should aggro her again after a few seconds"). Lift Acheron,
+            ; end the one-way pacify, clear the tracked aggressor; the mercy ghost (_PostEscapeGrace,
+            ; already run inside the struggle/QTE helper) covers the first seconds, then hostility
+            ; resumes naturally — the aggressor's aggression came back in _CleanupPair, so the fight
+            ; is back on shortly after the grace.
+            If downed && _IsDownedAny(akVictim)
+                _ClearAcheronHold(akVictim)
+            EndIf
+            _PacifyActor(akVictim, False)
+            ; Revert every "lover"-rank anti-re-aggro link touching this victim — the current pair's
+            ; AND stale ones left by past cycles (they were never reverted anywhere, so past victims
+            ; stayed permanently non-hostile to their aggressors: part of why the liberated Joylie
+            ; stood there doing nothing, and why the giant she broke free from attacked nobody).
+            _ClearAggressorBonds(akVictim)
+            StorageUtil.SetFormValue(akVictim, "SNBaka.GroundWindowAggressor", None)
+            akVictim.EvaluatePackage()
+            ; Narrative parity: without this the LLM never learned an NPC broke free — it last heard
+            ; "X pins Y down" and then silence (the "it's a bit lost" report). baka_release is the
+            ; existing freed-victim eventType (HelpUp/Release use it).
+            SkyrimNetApi.RegisterEvent("baka_release", \
+                akVictim.GetDisplayName() + " breaks free of " + akCreature.GetDisplayName() + "'s grip and struggles back to their feet — shaken, but free and ready to fight.", \
+                akVictim, akCreature)
+            _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): victim broke free — fully liberated, fight may resume after the grace window")
+            ; Creature LOST the struggle (victim broke free) -- explicitly make sure it's actually back
+            ; on its feet and free to act, rather than just trusting PlayPairedSequence's own _CleanupPair
+            ; reset to have fully taken. Belt-and-suspenders for the exact "falmer fell and got stuck"
+            ; symptom reported in testing: it's the aggressor here, nothing else in this whole flow ever
+            ; checks on IT specifically once it's lost, unlike the victim (who gets _DelegateDownToAcheron/
+            ; Acheron's own recovery loop either way).
+            ; A short beat first, per explicit feedback: firing this the SAME instant the victim's own
+            ; concurrent _CleanupPair is still resolving (both threads unwind right on top of each other)
+            ; is exactly the kind of race a stray stagger from still-active nearby combat can land in.
+            ; Let things settle for a beat before re-asserting the pose (trimmed from 3.0s — "after
+            ; winning ending, it's too long, 2 seconds are plenty" — combined with the mercy grace
+            ; this keeps the whole win exit around the requested 2s).
+            Utility.Wait(1.0)
+            _HoldActorAI(akCreature, False)
+            ; IdleForceDefaultState alone still left some creatures visibly stuck in the paired
+            ; sequence's final frame (confirmed still happening in testing) -- staggerStart is the
+            ; same trick _DefeatGroundWindow already relies on to force a real animation-state
+            ; transition out of a held pose (see its "Stand Back" branch above), so borrow it here
+            ; too instead of trusting the idle reset alone to break the graph out of it.
+            Debug.SendAnimationEvent(akCreature, "staggerStart")
+            Utility.Wait(0.3)
+            Debug.SendAnimationEvent(akCreature, "IdleForceDefaultState")
+            akCreature.EvaluatePackage()
+            _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): " + akCreature.GetDisplayName() + " lost the struggle -- explicit liberation (stagger + AI released, pose reset)")
         EndIf
         _CueResistOutcome("baka_forced", akCreature, akVictim)
     EndIf
@@ -4872,7 +6428,7 @@ Bool Function TryCreatureEscalateFromPower(Actor akCreature)
     If victim
         _DoCreatureEscalation(akCreature, victim)
     Else
-        Debug.Notification("No valid victim near " + akCreature.GetDisplayName() + ".")
+        _Notify("No valid victim near " + akCreature.GetDisplayName() + ".")
     EndIf
     Return True
 EndFunction
@@ -4883,7 +6439,7 @@ EndFunction
 ; before sending this event) rather than hardcoded to PlayerRef, so an NPC victim gets the same chance
 ; for a nearby beast to pounce that the player does — same queue-drain pattern as OnDownRequest.
 Event OnTryCreatureOnDowned(String eventName, String strArg, Float numArg, Form sender)
-    Debug.Trace("[SNBaka] OnTryCreatureOnDowned fired (bCreatureEscalation=" + bCreatureEscalation + " bCreatureOnPlayer=" + bCreatureOnPlayer + ")")
+    _Log("[SNBaka] OnTryCreatureOnDowned fired (bCreatureEscalation=" + bCreatureEscalation + " bCreatureOnPlayer=" + bCreatureOnPlayer + " strArg=" + strArg + ")")
     Int cnt = StorageUtil.FormListCount(PlayerRef, "SNBaka.CreaturePounceQueue")
     Int i = 0
     While i < cnt
@@ -4896,74 +6452,342 @@ Event OnTryCreatureOnDowned(String eventName, String strArg, Float numArg, Form 
     StorageUtil.FormListClear(PlayerRef, "SNBaka.CreaturePounceQueue")
 EndEvent
 
-; Passive creature initiator: a human is DOWN — if the creature opt-in is on, a supported, in-combat
-; creature is nearby, and the chance roll passes, it takes the opportunity. Clears an Acheron bleedout
-; first so the paired creature animation positions correctly.
+; Passive creature initiator: a human is DOWN — if the creature opt-in is on, a supported creature is
+; nearby, and the chance roll passes, it takes the opportunity. Clears an Acheron bleedout first so the
+; paired creature animation positions correctly.
+; Combat-gated up front now (see _CombatNear check below) -- confirmed in testing that letting the
+; struggle happen mid-combat and only gating the SEX portion on _CombatNear (in _DoCreatureEscalation)
+; wasn't just a pacing issue: starting the OStim scene right as combat state is still settling crashed
+; the game inside OStim's own AlignMenu code (null actor alignment). Waiting for combat to actually clear
+; before even attempting the struggle gives the engine breathing room before OStim's thread is touched.
+; The retry mechanisms already in place (Baka's own re-trigger, Acheron's periodic re-roll) mean this
+; just quietly waits and tries again later instead of failing outright.
 Function _TryCreatureEscalateOnDowned(Actor akVictim)
-    Debug.Trace("[SNBaka] _TryCreatureEscalateOnDowned ENTER: victim=" + akVictim + " escOn=" + bCreatureEscalation + " onPlayer=" + bCreatureOnPlayer)
+    _Log("[SNBaka] _TryCreatureEscalateOnDowned ENTER: victim=" + akVictim + " escOn=" + bCreatureEscalation + " onPlayer=" + bCreatureOnPlayer)
     If !bCreatureEscalation
-        Debug.Trace("[SNBaka] creature: master switch (bCreatureEscalation) is OFF — enable it in the MCM")
+        _Log("[SNBaka] creature: master switch (bCreatureEscalation) is OFF — enable it in the MCM")
         Return
     EndIf
     If !akVictim || akVictim.IsDead() || IsActorLocked(akVictim)
-        Debug.Trace("[SNBaka] creature: victim none/dead/locked (locked=" + IsActorLocked(akVictim) + ")")
+        _Log("[SNBaka] creature: victim none/dead/locked (locked=" + IsActorLocked(akVictim) + ")")
+        Return
+    EndIf
+    ; SNBaka.Locked (checked above) covers scenes WE started, but a victim can be in an OStim/SexLab
+    ; scene some other mod started (never Locked by us) -- explicit spec: a downed actor mid-scene is
+    ; never a pounce candidate, whoever owns the scene.
+    If IsInSexAnimation(akVictim)
+        _Log("[SNBaka] creature: victim is in a sex scene — never a pounce candidate mid-scene")
         Return
     EndIf
     If akVictim == PlayerRef && !bCreatureOnPlayer
-        Debug.Trace("[SNBaka] creature: player victim but bCreatureOnPlayer is OFF — enable it in the MCM")
+        _Log("[SNBaka] creature: player victim but bCreatureOnPlayer is OFF — enable it in the MCM")
         Return
     EndIf
     If !_IsDownedAny(akVictim)
-        Debug.Trace("[SNBaka] creature: victim not downed (OnGround=" + StorageUtil.GetIntValue(akVictim, "SNBaka.OnGround", 0) + " bleeding=" + akVictim.IsBleedingOut() + " acheronHeld=" + StorageUtil.GetIntValue(akVictim, "SNAcheron.Held", 0) + ")")
+        _Log("[SNBaka] creature: victim not downed (OnGround=" + StorageUtil.GetIntValue(akVictim, "SNBaka.OnGround", 0) + " bleeding=" + akVictim.IsBleedingOut() + " acheronHeld=" + StorageUtil.GetIntValue(akVictim, "SNAcheron.Held", 0) + ")")
         Return
     EndIf
-    If Utility.RandomInt(1, 100) > iCreatureSuccessPct
-        Debug.Trace("[SNBaka] _TryCreatureEscalateOnDowned: chance roll failed")
+    ; Confirmed real bug from testing: a struggle grabbing someone WHILE they're still mid down-transition
+    ; (the bleedout/collapse animation hasn't settled) can break the animation state and leave them stuck
+    ; perpetually "downing". SNAcheron.FreshDownRT is the shared stamp Acheron's own _CueDowned/
+    ; Downed_SkyrimNet.RunConsequence set at the exact moment of a genuinely fresh down (0.0 default if
+    ; Acheron isn't installed or this is a pure Baka-native down, which trivially passes this check).
+    Float sinceFreshDown = Utility.GetCurrentRealTime() - StorageUtil.GetFloatValue(akVictim, "SNAcheron.FreshDownRT", 0.0)
+    If sinceFreshDown < fFreshDownGraceDuration
+        _Log("[SNBaka] creature: blocked — " + akVictim.GetDisplayName() + " only " + sinceFreshDown + "s since fresh down, need " + fFreshDownGraceDuration + "s to settle first")
         Return
     EndIf
-    Actor best     = None
-    Float bestDist = 1500.0
-    ; Cross-cell radius search first (same fix as _AnyActorNear) — a creature standing right next to its
-    ; downed victim can be registered in a neighboring exterior cell and invisible to the cell-only sweep
-    ; below, which was the usual reason the pounce never found a beast that was plainly right there.
-    Actor closest = Game.FindClosestActorFromRef(akVictim, bestDist)
-    If closest && closest != akVictim && closest != PlayerRef && !closest.IsDead() && !IsActorLocked(closest) && _CreatureAnimKey(closest) != ""
-        best     = closest
-        bestDist = akVictim.GetDistance(closest)
+    ; NOTE: deliberately NOT checking _InDefeatGrace here. That grace window exists to stop a fresh
+    ; mid-combat on-hit spam from chaining a second struggle onto the first with zero breathing room
+    ; (see OnCreatureHitFollower) -- it is NOT meant to also block the separate, explicitly-requested
+    ; "once on the ground, still fair game to nearby proximity actors" behavior this function provides.
+    ; Confirmed in testing: applying it here silently ate every downed re-consideration attempt for
+    ; the whole 100s window right after a fresh takedown, exactly when a downed victim should still be
+    ; up for grabs.
+    ; Only the VICTIM's own live combat state gates the struggle attempt now -- an unrelated fight
+    ; happening elsewhere in the cell used to block this outright (_CombatNear scanned the whole cell
+    ; out to 3000 units), which meant a creature standing right next to an already-downed, defenseless
+    ; victim could never even consider her while allies were still busy with a DIFFERENT enemy nearby.
+    ; The actual OStim-mid-combat crash this was guarding against is a SCENE-START hazard, not a
+    ; struggle hazard -- that gate still exists further down (see the _CombatNear call before
+    ; _StartSexScene). The chosen candidate's own combat state is re-checked once "best" is found below.
+    If _HasLiveCombatTarget(akVictim)
+        _Log("[SNBaka] creature: blocked — " + akVictim.GetDisplayName() + " still has a live combat target, waiting for it to clear before even attempting")
+        Return
     EndIf
-    Cell c = akVictim.GetParentCell()
-    If c
-        Int total = c.GetNumRefs(62)
-        Int i = 0
-        While i < total
-            Actor a = c.GetNthRef(i, 62) as Actor
-            If a && a != akVictim && a != PlayerRef && !a.IsDead()
-                String ck = _CreatureAnimKey(a)
-                If ck != ""
-                    ; Log every nearby beast we recognise, so we can see what's around when testing.
-                    Debug.Trace("[SNBaka] nearby creature: '" + a.GetDisplayName() + "' key=" + ck + " inCombat=" + a.IsInCombat() + " locked=" + IsActorLocked(a) + " dist=" + a.GetDistance(akVictim))
-                    ; Don't require IsInCombat: a beast that just downed the victim has usually LEFT combat
-                    ; (no live target), which was filtering out the very creature that should pounce. Nearest
-                    ; un-locked supported beast within range wins.
-                    If !IsActorLocked(a) && a.GetDistance(akVictim) < bestDist
-                        bestDist = a.GetDistance(akVictim)
-                        best = a
-                    EndIf
+    ; A beat between attempts — confirmed in testing that a "succeed but combat still near" outcome
+    ; re-downs the victim, which immediately re-fires this same event with zero delay, chaining a second
+    ; full struggle QTE onto the first with no breathing room at all. This throttles ANY re-entry
+    ; (initial pounce, the "loop" re-check, or this kind of immediate re-trigger) to once per few seconds.
+    Float now = Utility.GetCurrentRealTime()
+    Float lastAttempt = StorageUtil.GetFloatValue(akVictim, "SNBaka.LastCreatureAttemptRT", 0.0)
+    If (now - lastAttempt) < 3.0
+        _Log("[SNBaka] creature: skipped — only " + (now - lastAttempt) + "s since last attempt, need 3.0s")
+        Return
+    EndIf
+    StorageUtil.SetFloatValue(akVictim, "SNBaka.LastCreatureAttemptRT", now)
+    Actor best        = None
+    Float bestDist    = 1500.0
+    ; Fast path, Yamete Redux style: whoever/whatever downed this victim is already a known reference
+    ; (SNBaka.GroundWindowAggressor, set at down-time) — check it directly with GetDistance() before
+    ; falling back to the cell sweep below for a DIFFERENT creature that merely wandered up afterward.
+    ; Used to lead with Game.FindClosestActorFromRef for cross-cell reach, but that proved unreliable
+    ; in testing (same false negative that hit _AnyActorNear).
+    Actor threat = StorageUtil.GetFormValue(akVictim, "SNBaka.GroundWindowAggressor") as Actor
+    ; Distance check added here — this used to accept the tracked reference unconditionally regardless
+    ; of how far away it actually was, letting a creature that had wandered far off still win the "best"
+    ; slot (nothing else would beat its huge bestDist unless something closer also happened to be found).
+    If threat && threat != akVictim && !threat.IsDead() && !_IsDownedAny(threat) && akVictim.GetDistance(threat) < bestDist
+        _Log("[SNBaka] tracked threat: '" + threat.GetDisplayName() + "' key='" + _CreatureAnimKey(threat) + "' locked=" + IsActorLocked(threat) + " dist=" + akVictim.GetDistance(threat))
+        ; Check _CreatureAnimKey FIRST, not _IsCreatureActor — Falmer and Draugr are creature-behaving
+        ; races that Bethesda still tags with the ActorTypeNPC keyword (the same one every human uses),
+        ; so _IsCreatureActor(falmer) reads False. _CreatureAnimKey matches by actual race name and isn't
+        ; fooled by that; a race-name match here means it's a supported creature no matter what keyword
+        ; it carries.
+        If _CreatureAnimKey(threat) != ""
+            If threat != PlayerRef && !IsActorLocked(threat)
+                best     = threat
+                bestDist = akVictim.GetDistance(threat)
+            EndIf
+        EndIf
+        ; A tracked HUMANOID here is deliberately NOT a blocker anymore -- see the witness-rule removal
+        ; note on the sweep below.
+    EndIf
+    ; LOADED-AREA enumeration (po3 Papyrus Extender), not a single-cell sweep: dens and camps span
+    ; linked cells, and the victim's own parent cell repeatedly turned up empty of creatures standing
+    ; right next to them (confirmed 16:03 session: every player-victim scan logged "no supported
+    ; creature near Claudia" while a falmer stood in grabbing range — it was registered in a different
+    ; cell, and only Joylie's tracked-aggressor fast path ever found it). Processing level 0 = every
+    ; AI-active actor currently loaded, no cell dependence. The old single-closest-actor cross-cell
+    ; supplement is gone with it — it only ever sampled ONE actor, usually the other downed follower.
+    Actor[] loaded = PO3_SKSEFunctions.GetActorsByProcessingLevel(0)
+    Int total = loaded.Length
+    Int i = 0
+    While i < total
+        Actor a = loaded[i]
+        If a && a != akVictim && a != PlayerRef && !a.IsDead()
+            String ck = _CreatureAnimKey(a)
+            If ck != ""
+                ; Log every nearby beast we recognise, so we can see what's around when testing.
+                _Log("[SNBaka] nearby creature: '" + a.GetDisplayName() + "' key=" + ck + " inCombat=" + a.IsInCombat() + " locked=" + IsActorLocked(a) + " dist=" + a.GetDistance(akVictim))
+                If !IsActorLocked(a) && a.GetDistance(akVictim) < bestDist
+                    bestDist = a.GetDistance(akVictim)
+                    best = a
                 EndIf
             EndIf
-            i += 1
-        EndWhile
-    EndIf
+            ; The humanoid-WITNESS rule that used to live here (any live, non-downed humanoid within
+            ; 1500u blocked the attempt entirely) stays REMOVED per explicit spec — the MCM engagement
+            ; chance is the only frequency throttle.
+        EndIf
+        i += 1
+    EndWhile
     If !best
-        Debug.Trace("[SNBaka] _TryCreatureEscalateOnDowned: no supported creature near " + akVictim.GetDisplayName())
+        _Log("[SNBaka] _TryCreatureEscalateOnDowned: no supported creature near " + akVictim.GetDisplayName())
         Return
     EndIf
-    ; Clear an Acheron bleedout/hold so the creature anim can position the (now captive) victim properly.
-    _ClearAcheronHold(akVictim)
-    StorageUtil.SetIntValue(akVictim, "SNBaka.OnGround", 0)
-    Debug.Trace("[SNBaka] _TryCreatureEscalateOnDowned: " + best.GetDisplayName() + " pounces on downed " + akVictim.GetDisplayName())
+    ; The candidate itself might still be genuinely mid-fight with someone else even though the victim
+    ; (checked above) isn't -- don't pull it out of a real fight to do this.
+    If _HasLiveCombatTarget(best)
+        _Log("[SNBaka] _TryCreatureEscalateOnDowned: found " + best.GetDisplayName() + " but it's still actively fighting someone else")
+        Return
+    EndIf
+    ; No success roll here anymore -- iCreatureSuccessPct is _DoCreatureEscalation's OWN roll (used for
+    ; both the not-yet-downed struggle AND, now, the already-downed claim). Rolling a SEPARATE "does the
+    ; creature even bother" gate here would double up with that AND with Acheron's own
+    ; fCreatureEngageChance roll (the actual, correct throttle on how often this pipeline gets a shot at
+    ; all) -- confirmed in testing as a victim left downed for a long time
+    ; with nearby creatures repeatedly declining her purely on this redundant coin flip. A creature that
+    ; actually finds and commits to an already-downed victim now always takes her, same as the guaranteed
+    ; branch _DoCreatureEscalation already has for this exact case.
+    ; The downed/hold state is cleared inside _DoCreatureEscalation itself, only once every one of its
+    ; own gates (sex restriction, anim key, lock race, etc.) has actually passed — see its comment.
+    ; LLM ESCALATION GATE (MCM opt-in): instead of committing automatically, describe the moment to
+    ; SkyrimNet and let the LLM answer YES/NO from context (pacing, who's present, what just happened).
+    ; Async: stash the pair, fire the prompt, continue in OnEscalationGateResponse. Fail-OPEN — an LLM
+    ; outage or template failure behaves like the gate is off; it's advisory, not a kill-switch.
+    If bLLMGateEscalation
+        Float nowG = Utility.GetCurrentRealTime()
+        If _bGatePending && (nowG - _fGateSentRT) < 30.0
+            _Log("[SNBaka] _TryCreatureEscalateOnDowned: LLM gate already pending — skipping duplicate ask")
+            Return
+        EndIf
+        _bGatePending = True
+        _fGateSentRT  = nowG
+        _gateCreature = best
+        _gateVictim   = akVictim
+        String ctx = "{\"creatureName\":\"" + best.GetDisplayName() + "\",\"victimName\":\"" + akVictim.GetDisplayName() + "\",\"maxRecentEvents\":20}"
+        Int sent = SkyrimNetApi.SendCustomPromptToLLM("snbaka_escalation_gate", "", ctx, Self as Quest, "SkyrimNet_BakaIntegration", "OnEscalationGateResponse")
+        _Log("[SNBaka] _TryCreatureEscalateOnDowned: LLM gate asked (" + best.GetDisplayName() + " -> " + akVictim.GetDisplayName() + "), sent=" + sent)
+        If sent != 1
+            _bGatePending = False
+            _DoCreatureEscalation(best, akVictim)   ; couldn't even queue the ask — fail open
+        EndIf
+        Return
+    EndIf
+    _Log("[SNBaka] _TryCreatureEscalateOnDowned: " + best.GetDisplayName() + " attempts downed " + akVictim.GetDisplayName())
     _DoCreatureEscalation(best, akVictim)
 EndFunction
+
+; SendCustomPromptToLLM callback for the escalation gate (snbaka_escalation_gate.prompt asks for a
+; single-word YES/NO). success 1 = real answer; 0 = render/network failure, which fails OPEN.
+Function OnEscalationGateResponse(String response, Int success)
+    Actor c = _gateCreature
+    Actor v = _gateVictim
+    _gateCreature = None
+    _gateVictim   = None
+    _bGatePending = False
+    If !c || !v
+        Return
+    EndIf
+    Bool allow = True
+    If success == 1
+        allow = StringUtil.Find(response, "YES") >= 0 || StringUtil.Find(response, "Yes") >= 0 || StringUtil.Find(response, "yes") >= 0
+        _Log("[SNBaka] OnEscalationGateResponse: LLM said '" + response + "' -> allow=" + allow)
+    Else
+        _Log("[SNBaka] OnEscalationGateResponse: gate errored ('" + response + "') — failing OPEN")
+    EndIf
+    If !allow
+        ; A NO backs this victim's pipeline off ~30s (vs the usual 3s retry) so the same question isn't
+        ; peppered at the LLM every engagement roll. Stamping the last-attempt clock into the future
+        ; extends the existing throttle without a new key.
+        StorageUtil.SetFloatValue(v, "SNBaka.LastCreatureAttemptRT", Utility.GetCurrentRealTime() + 27.0)
+        Return
+    EndIf
+    ; The answer took real seconds — re-validate the moment before committing.
+    If v.IsDead() || c.IsDead() || !_IsDownedAny(v) || IsActorLocked(c) || IsActorLocked(v)
+        _Log("[SNBaka] OnEscalationGateResponse: situation changed while the LLM was thinking — dropping")
+        Return
+    EndIf
+    _DoCreatureEscalation(c, v)
+EndFunction
+
+; Native hit-event hook (HitEventSink.cpp): a creature just landed a melee hit on a player-teammate
+; (follower) OR the player themselves. Unlike _TryCreatureEscalateOnDowned, this fires straight off
+; the hit -- no need for the victim to be downed first, which is the whole point (mid-combat
+; escalation). Aggressor resolution differs by victim: a follower has real AI combat targeting, so
+; GetCombatTarget() is reliable; the player doesn't necessarily, so SNBakaUI.GetLastHitAggressor asks
+; the native side for the actual hit-event cause instead (cached at the exact moment it fired).
+; AND-gated: bCreatureEscalateFollowersOnHit AND bCreatureCombatAllowed here, plus bCreatureOnPlayer
+; when the victim is the player, then _DoCreatureEscalation's own master switch/sex filter/lock checks
+; -- every one of them has to agree, turn any single one off and this never fires. The 3s throttle is
+; shared with _TryCreatureEscalateOnDowned's own (same victim, same purpose: don't chain a second full
+; struggle onto the first with zero breathing room).
+Event OnCreatureHitFollower(string eventName, string strArg, float numArg, Form sender)
+    _Log("[SNBaka] OnCreatureHitFollower ENTER: sender=" + sender + " followerToggle=" + bCreatureEscalateFollowersOnHit + " combatAllowed=" + bCreatureCombatAllowed)
+    If !bCreatureEscalateFollowersOnHit || !bCreatureCombatAllowed
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — bCreatureEscalateFollowersOnHit or bCreatureCombatAllowed is off in MCM")
+        Return
+    EndIf
+    Actor victim = sender as Actor
+    If !victim
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — sender wasn't an Actor")
+        Return
+    EndIf
+    If victim.IsDead() || IsActorLocked(victim)
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — victim=" + victim.GetDisplayName() + " dead=" + victim.IsDead() + " locked=" + IsActorLocked(victim))
+        Return
+    EndIf
+    If IsInSexAnimation(victim)
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — " + victim.GetDisplayName() + " is mid sex scene (any framework/any mod)")
+        Return
+    EndIf
+    Bool victimIsPlayer = (victim == PlayerRef)
+    If victimIsPlayer && !bCreatureOnPlayer
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — player victim but bCreatureOnPlayer is OFF in MCM")
+        Return
+    EndIf
+    If _InDefeatGrace(victim)
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — " + victim.GetDisplayName() + " is still in their post-defeat grace window")
+        Return
+    EndIf
+    ; GetCombatTarget() first for a follower (usually right, no native round-trip needed) but fall back
+    ; to the native hit-cache either way -- confirmed in testing that a follower JUST released from a
+    ; struggle/pairing can read a stale/empty GetCombatTarget() for a beat even though a fresh hit just
+    ; landed (StopCombat()-heavy cleanup a moment earlier hadn't been re-acquired by AI yet). The native
+    ; cache is ground truth from the actual hit event regardless of victim type.
+    Actor aggressor = None
+    If !victimIsPlayer
+        aggressor = victim.GetCombatTarget()
+    EndIf
+    If !aggressor
+        aggressor = SNBakaUI.GetLastHitAggressor(victim)
+    EndIf
+    If !aggressor
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — could not resolve an aggressor for " + victim.GetDisplayName())
+        Return
+    EndIf
+    If aggressor.IsDead()
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — aggressor=" + aggressor.GetDisplayName() + " is dead")
+        Return
+    EndIf
+    ; Which pipeline handles this aggressor? A supported creature takes the creature path below; a
+    ; HUMANOID takes the human on-hit path (own MCM toggle/chance, dispatches to the ordinary Struggle
+    ; action); an unsupported creature type (horker, rabbit...) takes neither.
+    String aggKey = _CreatureAnimKey(aggressor)
+    Bool humanPath = False
+    If aggKey == ""
+        If !bHumanEscalateOnHit || _IsCreatureActor(aggressor)
+            _Log("[SNBaka] OnCreatureHitFollower: blocked — aggressor=" + aggressor.GetDisplayName() + " not a supported creature (humanOnHit=" + bHumanEscalateOnHit + " isCreature=" + _IsCreatureActor(aggressor) + ")")
+            Return
+        EndIf
+        If _IsDownedAny(aggressor) || IsActorLocked(aggressor)
+            _Log("[SNBaka] OnCreatureHitFollower: blocked — humanoid aggressor " + aggressor.GetDisplayName() + " is downed/locked")
+            Return
+        EndIf
+        ; Friendly-fire guard, humanoid path only -- the native hit sink fires for ANY non-player
+        ; aggressor, and the log shows followers landing stray hits on each other mid-melee (Joylie
+        ; showing up as "aggressor" against Claudia). A creature reaching this handler is essentially
+        ; always a real enemy; a humanoid needs the actual hostility check or allies would grapple
+        ; each other off accidental hits.
+        If !aggressor.IsHostileToActor(victim)
+            _Log("[SNBaka] OnCreatureHitFollower: blocked — humanoid " + aggressor.GetDisplayName() + " is not hostile to " + victim.GetDisplayName() + " (stray/friendly hit)")
+            Return
+        EndIf
+        humanPath = True
+    EndIf
+    ; Player + OStim-buggy-combat carve-out: OStim can crash if combat resettles while its own thread
+    ; is running (confirmed via CrashLoggerSSE earlier), so for the player specifically, when OStim
+    ; would be the resolved backend, don't even ATTEMPT the struggle while combat is still live for
+    ; them -- wait for it to clear first. NPCs, and player+SexLab, keep the existing behavior: the
+    ; struggle can start mid-combat, only the SCENE itself waits for combat to clear (_CombatNear
+    ; before _StartSexScene). Creature-path only: a human struggle never chains straight into a scene
+    ; (a lost struggle ends in the ground window; the scene needs a separate, already combat-gated
+    ; Escalate), so there's no OStim thread at risk on that path.
+    If !humanPath && victimIsPlayer && _ResolveSexBackend(iCreatureBackend) == 2 && _HasLiveCombatTarget(victim)
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — player + OStim backend, waiting for combat to clear first")
+        Return
+    EndIf
+    ; Shared per-victim throttle across BOTH paths (same key), so a creature and a human can't chain
+    ; grabs on the same victim back-to-back.
+    Float now = Utility.GetCurrentRealTime()
+    Float lastAttempt = StorageUtil.GetFloatValue(victim, "SNBaka.LastCreatureAttemptRT", 0.0)
+    If (now - lastAttempt) < 3.0
+        _Log("[SNBaka] OnCreatureHitFollower: blocked — only " + (now - lastAttempt) + "s since last attempt on " + victim.GetDisplayName() + ", need 3.0s")
+        Return
+    EndIf
+    StorageUtil.SetFloatValue(victim, "SNBaka.LastCreatureAttemptRT", now)
+    Int need = iCreatureHitEngageChance
+    If humanPath
+        need = iHumanHitEngageChance
+    EndIf
+    Int roll = Utility.RandomInt(1, 100)
+    If roll > need
+        _Log("[SNBaka] OnCreatureHitFollower: skipped by chance roll — rolled " + roll + ", need <= " + need + " (humanPath=" + humanPath + ")")
+        Return
+    EndIf
+    If humanPath
+        _Log("[SNBaka] OnCreatureHitFollower: humanoid " + aggressor.GetDisplayName() + " hit " + victim.GetDisplayName() + " -- attempting mid-combat Struggle (rolled " + roll + ")")
+        ; The ordinary Struggle action: QTE for a player victim, timed roll for NPCs, ground window on
+        ; a loss -- every existing Struggle gate (IsEligible: master switch, sex filter, player-target
+        ; permission, locks) still applies and traces its own rejection if it blocks. abFromHit=True
+        ; relaxes only IsEligible's attacker-in-combat gate, which would otherwise reject every on-hit
+        ; attempt by definition (the attacker just landed a combat hit).
+        Struggle_Execute(aggressor, victim, True)
+    Else
+        _Log("[SNBaka] OnCreatureHitFollower: " + aggressor.GetDisplayName() + " hit " + victim.GetDisplayName() + " -- attempting mid-combat escalation (rolled " + roll + ")")
+        _DoCreatureEscalation(aggressor, victim)
+    EndIf
+EndEvent
 
 ; Nearest valid human near the creature: not a creature, alive, victim-sex allowed, player only if
 ; permitted, and (when combat escalation is off) already downed/bleeding out.
@@ -5055,7 +6879,7 @@ EndFunction
 ; poseName selects the clip; PoseAroused/PoseDrink/PoseFood keep their own functions below since
 ; they carry real extra logic (gendered variants, blackout/reaction rolls) beyond a plain hold.
 Function Pose_Execute(Actor akInitiator, String poseName)
-    Debug.Trace("[SNBakaACT] Pose ENTER poseName=" + poseName)
+    _Log("[SNBakaACT] Pose ENTER poseName=" + poseName)
     If poseName == "Aroused"
         PoseAroused_Execute(akInitiator)
         Return
@@ -5097,7 +6921,7 @@ Function Pose_Execute(Actor akInitiator, String poseName)
         anim = "BaboExPocketPullout"
     EndIf
     If anim == ""
-        Debug.Trace("[SNBaka] Pose_Execute: unrecognized poseName '" + poseName + "'")
+        _Log("[SNBaka] Pose_Execute: unrecognized poseName '" + poseName + "'")
         Return
     EndIf
     RecordAnimation(akInitiator, "Pose" + poseName, "")
@@ -5106,7 +6930,7 @@ EndFunction
 
 ; Arousal idle — gendered clip (male/female variants), random of two.
 Function PoseAroused_Execute(Actor akInitiator)
-    Debug.Trace("[SNBakaACT] PoseAroused ENTER")
+    _Log("[SNBakaACT] PoseAroused ENTER")
     RecordAnimation(akInitiator, "PoseAroused", "")
     String ev
     If akInitiator.GetActorBase().GetSex() == 1   ; female
@@ -5130,7 +6954,7 @@ EndFunction
 ; malicious NPC's DrunkExploit / the player's power. (Blackout is a Start->Loop sequence, so it is sent
 ; ONCE and held without re-asserting — _PlaySoloHold's per-tick re-assert would restart the intro.)
 Function PoseDrink_Execute(Actor akInitiator)
-    Debug.Trace("[SNBakaACT] PoseDrink ENTER")
+    _Log("[SNBakaACT] PoseDrink ENTER")
     If !akInitiator || !HasFemaleBody(akInitiator) || akInitiator == PlayerRef
         Return
     EndIf
@@ -5160,7 +6984,7 @@ EndFunction
 
 ; Food (female): a reaction idle — eats anyway, or recoils in disgust (random). Pure flavor.
 Function PoseFood_Execute(Actor akInitiator)
-    Debug.Trace("[SNBakaACT] PoseFood ENTER")
+    _Log("[SNBakaACT] PoseFood ENTER")
     If !akInitiator || !HasFemaleBody(akInitiator)
         Return
     EndIf
@@ -5189,7 +7013,87 @@ Function _RegisterModEvents()
     RegisterForModEvent("AEL_GameEnd",                "OnAELGameEnd")
     RegisterForModEvent("SNBaka_MenuChoice",          "OnSNBakaMenuChoice")
     RegisterForModEvent("SNBaka_TryCreatureOnDowned", "OnTryCreatureOnDowned")
+    RegisterForModEvent("SNBaka_CreatureHitFollower", "OnCreatureHitFollower")
+    RegisterForModEvent("SNAcheron_RequestForceRecover", "OnAcheronForceRecoverRequest")
+    RegisterForModEvent("SNBaka_DefeatedExecuted",       "OnDefeatedExecuted")
+    RegisterForModEvent("SNAcheron_HunterPrideChoice", "OnHunterPrideChoice")
+    ; Mirrors SNAcheron.Present (set by the Acheron bridge) — lets Acheron's standalone install detect
+    ; whether we're actually here to answer SNBaka_TryCreatureOnDowned before it bothers waiting on us.
+    If PlayerRef
+        StorageUtil.SetIntValue(PlayerRef, "SNBaka.Present", 1)
+        _Log("[SNBaka] _RegisterModEvents: SNBaka.Present set to 1 on " + PlayerRef + " (readback=" + StorageUtil.GetIntValue(PlayerRef, "SNBaka.Present", -99) + ")")
+    Else
+        _Log("[SNBaka] _RegisterModEvents: PlayerRef is None -- SNBaka.Present NOT set this call")
+    EndIf
 EndFunction
+
+; Acheron's player self-recovery QTE (hold-key) asks us to force-recover an actor it can't fully clean
+; up itself (e.g. it was Baka's own local ground window holding them, not an Acheron hold) — same
+; queue-drain pattern as every other cross-mod request here. _ForceRecover is a no-op if the actor
+; wasn't downed by us in the first place, so this is safe to call regardless of who actually held them.
+; Native hit sink (HitEventSink.cpp): a PHYSICAL hit landed on an Acheron-DEFEATED non-player actor.
+; Vanilla-mortality spec for the helpless — a deliberate strike on a defeated body kills it. The kill
+; is applied HERE (not natively) so the remaining protections still count: essential/protected actors
+; survive (Actor.Kill respects the essential flag), and anyone locked in one of our interactions or a
+; sex scene is exempt (their ghost normally stops the hit ever registering; belt and suspenders).
+Event OnDefeatedExecuted(String eventName, String strArg, Float numArg, Form sender)
+    Actor victim = sender as Actor
+    If !victim || victim.IsDead() || victim == PlayerRef
+        Return
+    EndIf
+    If IsActorLocked(victim) || IsInSexAnimation(victim)
+        Return
+    EndIf
+    _Log("[SNBaka] OnDefeatedExecuted: " + victim.GetDisplayName() + " takes a killing blow while defeated")
+    SkyrimNetApi.RegisterEvent("baka_execution", \
+        victim.GetDisplayName() + " is struck while lying defeated on the ground — the blow is final.", \
+        None, victim)
+    StorageUtil.SetIntValue(victim, "SNAcheron.Held", 0)   ; release our claim so nothing fights the corpse
+    victim.Kill(None)
+EndEvent
+
+Event OnAcheronForceRecoverRequest(String eventName, String strArg, Float numArg, Form sender)
+    Int cnt = StorageUtil.FormListCount(PlayerRef, "SNAcheron.ForceRecoverQueue")
+    Int i = 0
+    While i < cnt
+        Actor a = StorageUtil.FormListGet(PlayerRef, "SNAcheron.ForceRecoverQueue", i) as Actor
+        If a
+            _ForceRecover(a)
+        EndIf
+        i += 1
+    EndWhile
+    StorageUtil.FormListClear(PlayerRef, "SNAcheron.ForceRecoverQueue")
+EndEvent
+
+; Acheron Integration registered our downed-victim actions into AcheronNG's own native "Hunter's Pride"
+; on-screen option menu (shown on plain E/activate against a defeated actor) — it can't call our Execute
+; functions directly (no hard script reference between the two mods, by design), so it stashes the
+; target and fires this event with the choice as a plain string instead, same "stash + mod event"
+; pattern as every other cross-mod hand-off here. Reuses _DispatchDownedAction's existing choice
+; dispatch verbatim (0=Escalate, 1=Investigate, 2=Inspect, 3=Stand Back, 4=Help Up) rather than
+; duplicating it — the player is always the caster here since this only ever fires from a native
+; vanilla-activate selection.
+Event OnHunterPrideChoice(String eventName, String strArg, Float numArg, Form sender)
+    Actor target = StorageUtil.GetFormValue(PlayerRef, "SNAcheron.HunterPrideTarget") as Actor
+    If !target
+        Return
+    EndIf
+    Int choice = -1
+    If strArg == "escalate"
+        choice = 0
+    ElseIf strArg == "investigate"
+        choice = 1
+    ElseIf strArg == "inspect"
+        choice = 2
+    ElseIf strArg == "standback"
+        choice = 3
+    ElseIf strArg == "helpup"
+        choice = 4
+    EndIf
+    If choice >= 0
+        _DispatchDownedAction(choice, PlayerRef, target)
+    EndIf
+EndEvent
 
 Function _RegisterDecorators()
     SkyrimNetApi.RegisterDecorator("get_baka_state",              "SkyrimNet_BakaIntegration", "GetBakaState")
@@ -5201,14 +7105,22 @@ Function _RegisterDecorators()
 EndFunction
 
 Event OnUpdateGameTime()
+    _Log("[SNBaka] OnUpdateGameTime ENTER: PlayerRef=" + PlayerRef + " gameTime=" + Utility.GetCurrentGameTime())
     UnregisterForUpdateGameTime()
+    ; PlayerRef must be refreshed BEFORE _RegisterModEvents() -- confirmed bug from testing:
+    ; _RegisterModEvents() only sets SNBaka.Present behind an "If PlayerRef" guard, but doesn't
+    ; check RegisterForModEvent's listeners (which don't need PlayerRef at all). If PlayerRef had
+    ; gone stale/None across a reload, the listeners kept registering fine every heartbeat while
+    ; the Present flag silently never got set again -- Acheron's own creature-handoff check reads
+    ; that flag and would skip every roll forever, even though Baka was actually alive and
+    ; listening (its own SNBaka_TryCreatureOnDowned handler could still fire directly).
+    If !PlayerRef
+        PlayerRef = Game.GetPlayer()
+    EndIf
     ; Re-assert decorators AND mod-event listeners after a save load (neither persists; Setup doesn't
     ; run on reload). This is what keeps the creature hand-off (and AEL/menu events) alive across loads.
     _RegisterDecorators()
     _RegisterModEvents()
-    If !PlayerRef
-        PlayerRef = Game.GetPlayer()
-    EndIf
     Float currentTime = Utility.GetCurrentGameTime()
     If _lastSpankFadeTime <= 0.0
         _lastSpankFadeTime = currentTime
@@ -5238,9 +7150,11 @@ Event OnUpdateGameTime()
             EndIf
         EndWhile
     EndIf
-    ; Fast heartbeat: ~0.1 game-hours so the decorator + mod-event registrations re-assert quickly after
-    ; a load. Registration is idempotent and cheap; the fade pass above is gated so it keeps its own rate.
-    RegisterForSingleUpdateGameTime(0.1)
+    ; Heartbeat slowed 5x (audit finding: this was one of two perpetual self-renewing update chains,
+    ; re-running 6 RegisterForModEvent calls every ~18s real-time forever). OnPlayerLoadGame/Setup
+    ; cover the normal re-registration cases; this is only the belt-and-suspenders fallback.
+    _Log("[SNBaka] OnUpdateGameTime: reached tail, re-arming for +0.5 game-hours")
+    RegisterForSingleUpdateGameTime(0.5)
 EndEvent
 
 ; Called by MCM when HealFactor changes — restarts the fade timer at the new rate.
@@ -5255,18 +7169,18 @@ EndFunction
 
 ; ---- Main spank dispatch ----
 Function SpankTarget_Execute(Actor akSpanker, Actor akTarget, Bool akForceButt = False)
-    Debug.Trace("[SNBakaACT] SpankTarget ENTER")
-    Debug.Trace("[SNBaka] SpankTarget_Execute: spanker=" + akSpanker.GetDisplayName() + " target=" + akTarget.GetDisplayName())
+    _Log("[SNBakaACT] SpankTarget ENTER")
+    _Log("[SNBaka] SpankTarget_Execute: spanker=" + akSpanker.GetDisplayName() + " target=" + akTarget.GetDisplayName())
     If !bEnabled || !akSpanker || !akTarget || akTarget.IsDead() || akSpanker.IsDead()
-        Debug.Trace("[SNBaka] SpankTarget: disabled or dead actor.")
+        _Log("[SNBaka] SpankTarget: disabled or dead actor.")
         Return
     EndIf
     If !bPlayerCanBeSpanked && akTarget == PlayerRef
-        Debug.Trace("[SNBaka] SpankTarget: player-as-target is disabled.")
+        _Log("[SNBaka] SpankTarget: player-as-target is disabled.")
         Return
     EndIf
     If !bSpankMaleTargets && akTarget.GetActorBase().GetSex() == 0
-        Debug.Trace("[SNBaka] SpankTarget: target is male — toggle 'Allow Male Targets' in MCM.")
+        _Log("[SNBaka] SpankTarget: target is male — toggle 'Allow Male Targets' in MCM.")
         Return
     EndIf
     Float lastSpank = StorageUtil.GetFloatValue(None, "SkyrimNetSDB.LastSpankTime", 0.0)
@@ -5277,10 +7191,10 @@ Function SpankTarget_Execute(Actor akSpanker, Actor akTarget, Bool akForceButt =
         cooldown = fSpankCooldownSex
     EndIf
     If nowTime - lastSpank < (cooldown / 86400.0)
-        Debug.Trace("[SNBaka] SpankTarget: cooldown active (" + (nowTime - lastSpank) * 86400.0 + "s < " + cooldown + "s)")
+        _Log("[SNBaka] SpankTarget: cooldown active (" + (nowTime - lastSpank) * 86400.0 + "s < " + cooldown + "s)")
         Return
     EndIf
-    Debug.Trace("[SNBaka] SpankTarget: proceeding — duringSex=" + duringSex)
+    _Log("[SNBaka] SpankTarget: proceeding — duringSex=" + duringSex)
     StorageUtil.SetFloatValue(None, "SkyrimNetSDB.LastSpankTime", nowTime)
     If !duringSex
         If LockBoth(akSpanker, akTarget)
@@ -5315,10 +7229,10 @@ Function SpankTarget_Execute(Actor akSpanker, Actor akTarget, Bool akForceButt =
 EndFunction
 
 Function SlapFace_Execute(Actor akSlapper, Actor akTarget)
-    Debug.Trace("[SNBakaACT] SlapFace ENTER")
-    Debug.Trace("[SNBaka] SlapFace_Execute: slapper=" + akSlapper.GetDisplayName() + " target=" + akTarget.GetDisplayName())
+    _Log("[SNBakaACT] SlapFace ENTER")
+    _Log("[SNBaka] SlapFace_Execute: slapper=" + akSlapper.GetDisplayName() + " target=" + akTarget.GetDisplayName())
     If !bEnabled || !akSlapper || !akTarget || akTarget.IsDead() || akSlapper.IsDead()
-        Debug.Trace("[SNBaka] SlapFace_Execute: early exit — bEnabled=" + bEnabled + " dead/None check")
+        _Log("[SNBaka] SlapFace_Execute: early exit — bEnabled=" + bEnabled + " dead/None check")
         Return
     EndIf
     If !bPlayerCanBeSpanked && akTarget == PlayerRef
@@ -5348,13 +7262,13 @@ Function SlapFace_Execute(Actor akSlapper, Actor akTarget)
 EndFunction
 
 Function BreastSlap_Execute(Actor akSpanker, Actor akTarget)
-    Debug.Trace("[SNBakaACT] BreastSlap ENTER")
+    _Log("[SNBakaACT] BreastSlap ENTER")
     If !bEnabled || !akSpanker || !akTarget || akTarget.IsDead() || akSpanker.IsDead()
         Return
     EndIf
     ; Breast slap targets NPCs only — never the player.
     If akTarget == PlayerRef
-        Debug.Trace("[SNBaka] BreastSlap_Execute: player-as-target is not allowed.")
+        _Log("[SNBaka] BreastSlap_Execute: player-as-target is not allowed.")
         Return
     EndIf
     If akTarget.GetActorBase().GetSex() != 1
@@ -5426,7 +7340,7 @@ Function _PlaySpankSound(Actor akTarget, Sound akImpact = None)
     ; Diagnostics: is the target the one we expect, loaded, and near the camera?
     Bool  loaded = akTarget.Is3DLoaded()
     Float dist   = akTarget.GetDistance(PlayerRef)
-    Debug.Trace("[SNBaka] _PlaySpankSound: target=" + akTarget.GetDisplayName() + \
+    _Log("[SNBaka] _PlaySpankSound: target=" + akTarget.GetDisplayName() + \
         " 3DLoaded=" + loaded + " distToPlayer=" + dist + \
         " impactForm=" + impact + " moanForm=" + SpankMoanSound)
 
@@ -5440,9 +7354,9 @@ Function _PlaySpankSound(Actor akTarget, Sound akImpact = None)
         If handle > 0
             Sound.SetInstanceVolume(handle, 1.0)
         EndIf
-        Debug.Trace("[SNBaka] _PlaySpankSound: impact handle=" + handle)
+        _Log("[SNBaka] _PlaySpankSound: impact handle=" + handle)
     Else
-        Debug.Trace("[SNBaka] _PlaySpankSound: SpankImpactSound is NONE")
+        _Log("[SNBaka] _PlaySpankSound: SpankImpactSound is NONE")
     EndIf
 
     Bool isFemale = akTarget.GetActorBase().GetSex() == 1
@@ -5452,11 +7366,11 @@ Function _PlaySpankSound(Actor akTarget, Sound akImpact = None)
         If moan > 0
             Sound.SetInstanceVolume(moan, 1.0)
         EndIf
-        Debug.Trace("[SNBaka] _PlaySpankSound: moan handle=" + moan)
+        _Log("[SNBaka] _PlaySpankSound: moan handle=" + moan)
     ElseIf !isFemale
-        Debug.Trace("[SNBaka] _PlaySpankSound: no moan — target not female")
+        _Log("[SNBaka] _PlaySpankSound: no moan — target not female")
     ElseIf !SpankMoanSound
-        Debug.Trace("[SNBaka] _PlaySpankSound: no moan — SpankMoanSound is NONE")
+        _Log("[SNBaka] _PlaySpankSound: no moan — SpankMoanSound is NONE")
     EndIf
 EndFunction
 
@@ -5472,7 +7386,7 @@ Function _PlaySpankMoanOnly(Actor akTarget)
     If moan > 0
         Sound.SetInstanceVolume(moan, 1.0)
     EndIf
-    Debug.Trace("[SNBaka] _PlaySpankMoanOnly: target=" + akTarget.GetDisplayName() + " moan handle=" + moan)
+    _Log("[SNBaka] _PlaySpankMoanOnly: target=" + akTarget.GetDisplayName() + " moan handle=" + moan)
 EndFunction
 
 ; ---- Reaction spells ----
@@ -5663,7 +7577,7 @@ Actor Function FindSexPartner(Actor akCaster)
         EndIf
         i += 1
     EndWhile
-    Debug.Trace("[SNBaka] FindSexPartner: result=" + nearest)
+    _Log("[SNBaka] FindSexPartner: result=" + nearest)
     Return nearest
 EndFunction
 
@@ -5676,18 +7590,41 @@ EndFunction
 ; Checks SexLab AnimatingFaction AND OStim ExcitementFaction so the menu
 ; is populated regardless of which sex framework is running the scene.
 Function _GetSexSceneNPCs(Actor akCaster, Actor[] result)
+    ; OStim SA fast path: OThread already tracks exactly who's in the scene (the thread roster), so
+    ; ask it directly instead of scanning the cell and checking faction membership — no guessing, no
+    ; radius, no false negatives. Falls through to the scan below for SexLab scenes (no thread concept)
+    ; or if OStim isn't installed / the caster isn't currently in a thread.
+    Faction osStimFaction = _OStimSceneFaction()
+    If osStimFaction
+        Int threadID = OActor.GetThreadID(akCaster)
+        If threadID >= 0
+            Actor[] threadActors = OThread.GetActors(threadID)
+            Int slot = 0
+            Int t = 0
+            While t < threadActors.Length && slot < 3
+                Actor candidate = threadActors[t]
+                If candidate && candidate != PlayerRef && candidate != akCaster && !candidate.IsDead()
+                    result[slot] = candidate
+                    slot += 1
+                EndIf
+                t += 1
+            EndWhile
+            If slot > 0
+                _Log("[SNBaka] _GetSexSceneNPCs: found " + slot + " NPC(s) via OStim thread " + threadID)
+                Return
+            EndIf
+        EndIf
+    EndIf
+
     ; Resolve SexLab faction
     Faction slFaction = SexLabAnimatingFaction
     If !slFaction
         slFaction = SkyrimNet_BakaSL.AnimFaction()
     EndIf
 
-    ; OStim faction (OStimActorCountFaction, runtime-resolved; None if OStim not installed)
-    Faction osStimFaction = _OStimSceneFaction()
-
     ; Need at least one faction to detect anything
     If !slFaction && !osStimFaction
-        Debug.Trace("[SNBaka] _GetSexSceneNPCs: no sex faction resolved (no SexLab faction and OStim not installed)")
+        _Log("[SNBaka] _GetSexSceneNPCs: no sex faction resolved (no SexLab faction and OStim not installed)")
         Return
     EndIf
 
@@ -5716,13 +7653,13 @@ Function _GetSexSceneNPCs(Actor akCaster, Actor[] result)
         EndIf
         i += 1
     EndWhile
-    Debug.Trace("[SNBaka] _GetSexSceneNPCs: found " + slot + " NPC(s) in scene")
+    _Log("[SNBaka] _GetSexSceneNPCs: found " + slot + " NPC(s) in scene")
 EndFunction
 
 ; Applies a full sex-safe spank: impact + moan + tats + face marks + tears.
 ; akSpanker may be None (self-spank). No paired animation — safe inside sex scenes.
 Function _SexSpank_Execute(Actor akSpanker, Actor akTarget)
-    Debug.Trace("[SNBakaACT] _SexSpank ENTER")
+    _Log("[SNBakaACT] _SexSpank ENTER")
     If !akTarget
         Return
     EndIf
@@ -5757,7 +7694,7 @@ Function _SexSpank_ShowByWhom(Actor[] sceneNPCs, Int npcCount)
         info += "3=" + sceneNPCs[2].GetDisplayName() + "  "
     EndIf
     info += "4=Yourself"
-    Debug.Notification(info)
+    _Notify(info)
     If !SexSpankByWhomMenu
         _SexSpank_Execute(None, PlayerRef)
         Return
@@ -5870,7 +7807,7 @@ Function SexSpank_ShowMenu(Actor akCaster)
     If playerInScene
         info += "4=You"
     EndIf
-    Debug.Notification(info)
+    _Notify(info)
 
     Int choice = SexSpankWhoMenu.Show()
 
@@ -5886,23 +7823,6 @@ Function SexSpank_ShowMenu(Actor akCaster)
     If choice < npcCount && sceneNPCs[choice]
         _SexSpank_Execute(akCaster, sceneNPCs[choice])
     EndIf
-EndFunction
-
-Actor Function FindNearestActor(Actor akFrom, Float maxDist)
-    If !akFrom
-        Return None
-    EndIf
-    Float x = akFrom.GetPositionX()
-    Float y = akFrom.GetPositionY()
-    Float z = akFrom.GetPositionZ()
-    Actor candidate = Game.FindClosestActor(x, y, z, maxDist)
-    Debug.Trace("[SNBaka] FindNearestActor: FindClosestActor=" + candidate + " from=" + akFrom.GetDisplayName())
-    If !candidate || candidate == akFrom || candidate.IsDead()
-        Debug.Trace("[SNBaka] FindNearestActor: returning None")
-        Return None
-    EndIf
-    Debug.Trace("[SNBaka] FindNearestActor: returning " + candidate.GetDisplayName() + " dist=" + candidate.GetDistance(akFrom))
-    Return candidate
 EndFunction
 
 ; ---- LLM action callbacks (called from YAML via quest instance) ----

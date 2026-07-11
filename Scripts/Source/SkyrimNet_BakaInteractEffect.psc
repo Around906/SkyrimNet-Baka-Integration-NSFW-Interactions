@@ -1,5 +1,5 @@
 Scriptname SkyrimNet_BakaInteractEffect extends ActiveMagicEffect
-{ Interact power: spank during sex, escalate on bleedout, menu otherwise. }
+{ Interact power: spank during sex, downed-victim menu (PrismaUI) otherwise. }
 
 SkyrimNet_BakaIntegration Property BakaMain Auto
 
@@ -48,11 +48,10 @@ Event OnEffectStart(Actor akTarget, Actor akCaster)
         Debug.Trace("[SNBaka][POWER] target=" + realTarget.GetDisplayName() + " bleedingOut=" + realTarget.IsBleedingOut())
     EndIf
 
-    ; Downed victim -> escalate (choke -> sex).  Both the bleedout state and the
-    ; SNBaka.OnGround flag (checked inside Interact_ShowMenu) route here.
-    If realTarget.IsBleedingOut()
-        BakaMain.Escalate_Execute(akCaster, realTarget)
-        Return
-    EndIf
+    ; Used to auto-escalate straight to sex here whenever the target was bleeding out, bypassing
+    ; Interact_ShowMenu (and its PrismaUI downed-menu) entirely for that one case. That's exactly the
+    ; "we always escalate, where's the menu" bug: Interact_ShowMenu already routes ANY downed target
+    ; (bleedout included, via _IsDownedAny) to SNBakaUI.ShowDownedMenu on its own -- this was a leftover
+    ; shortcut from before that menu existed, silently overriding it for the bleedout case specifically.
     BakaMain.Interact_ShowMenu(realTarget, akCaster)
 EndEvent

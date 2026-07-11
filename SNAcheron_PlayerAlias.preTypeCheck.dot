@@ -1,0 +1,152 @@
+digraph {
+ ordering=out;
+ ranksep=.4
+ rankdir=LR
+ bgcolor="lightgrey";
+ node [shape=box, fixedsize=false, fontsize=12, fontname="Helvetica-bold", fontcolor="blue"
+       width=.25, height=.25, color="black", style="bold"]
+ n0 [label="object"];
+ n1 [label="SNAcheron_PlayerAlias"];
+ n1 [label="SNAcheron_PlayerAlias"];
+ n2 [label="0"];
+ n3 [label="ReferenceAlias"];
+ n4 [label="Attach to a PLAYER alias on the persistent controller quest.\n  Re-registers the SkyrimNet decorator on load (runtime-only; does not persist). The bridge quest also\n  self-heals its own registrations via a game-time heartbeat, so this is belt-and-suspenders."];
+ n5 [label="event"];
+ n5 [label="event"];
+ n6 [label="header"];
+ n6 [label="header"];
+ n7 [label="NONE"];
+ n8 [label="OnInit"];
+ n9 [label="0"];
+ n10 [label="BLOCK"];
+ n10 [label="BLOCK"];
+ n11 [label="call"];
+ n11 [label="call"];
+ n12 [label="_Register"];
+ n13 [label="callparams"];
+ n14 [label="event"];
+ n14 [label="event"];
+ n15 [label="header"];
+ n15 [label="header"];
+ n16 [label="NONE"];
+ n17 [label="OnPlayerLoadGame"];
+ n18 [label="0"];
+ n19 [label="BLOCK"];
+ n19 [label="BLOCK"];
+ n20 [label="call"];
+ n20 [label="call"];
+ n21 [label="_Register"];
+ n22 [label="callparams"];
+ n23 [label="function"];
+ n23 [label="function"];
+ n24 [label="header"];
+ n24 [label="header"];
+ n25 [label="NONE"];
+ n26 [label="_Register"];
+ n27 [label="0"];
+ n28 [label="BLOCK"];
+ n28 [label="BLOCK"];
+ n29 [label="."];
+ n29 [label="."];
+ n30 [label="SkyrimNetApi"];
+ n31 [label="call"];
+ n31 [label="call"];
+ n32 [label="RegisterDecorator"];
+ n33 [label="callparams"];
+ n33 [label="callparams"];
+ n34 [label="PARAM"];
+ n34 [label="PARAM"];
+ n35 [label=""];
+ n36 [label="\"acheron_state\""];
+ n37 [label="PARAM"];
+ n37 [label="PARAM"];
+ n38 [label=""];
+ n39 [label="\"SkyrimNet_AcheronIntegration\""];
+ n40 [label="PARAM"];
+ n40 [label="PARAM"];
+ n41 [label=""];
+ n42 [label="\"GetAcheronState\""];
+ n43 [label="variable"];
+ n43 [label="variable"];
+ n44 [label="SkyrimNet_AcheronIntegration"];
+ n45 [label="bridge"];
+ n46 [label="as"];
+ n46 [label="as"];
+ n47 [label="call"];
+ n47 [label="call"];
+ n48 [label="GetOwningQuest"];
+ n49 [label="callparams"];
+ n50 [label="SkyrimNet_AcheronIntegration"];
+ n51 [label="If"];
+ n51 [label="If"];
+ n52 [label="bridge"];
+ n53 [label="BLOCK"];
+ n53 [label="BLOCK"];
+ n54 [label="."];
+ n54 [label="."];
+ n55 [label="bridge"];
+ n56 [label="call"];
+ n56 [label="call"];
+ n57 [label="_Register"];
+ n58 [label="callparams"];
+
+ n0 -> n1 // "object" -> "SNAcheron_PlayerAlias"
+ n1 -> n2 // "SNAcheron_PlayerAlias" -> "0"
+ n1 -> n3 // "SNAcheron_PlayerAlias" -> "ReferenceAlias"
+ n1 -> n4 // "SNAcheron_PlayerAlias" -> "Attach to a PLAYER alias on the persistent controller quest.\n  Re-registers the SkyrimNet decorator on load (runtime-only; does not persist). The bridge quest also\n  self-heals its own registrations via a game-time heartbeat, so this is belt-and-suspenders."
+ n0 -> n5 // "object" -> "event"
+ n5 -> n6 // "event" -> "header"
+ n6 -> n7 // "header" -> "NONE"
+ n6 -> n8 // "header" -> "OnInit"
+ n6 -> n9 // "header" -> "0"
+ n5 -> n10 // "event" -> "BLOCK"
+ n10 -> n11 // "BLOCK" -> "call"
+ n11 -> n12 // "call" -> "_Register"
+ n11 -> n13 // "call" -> "callparams"
+ n0 -> n14 // "object" -> "event"
+ n14 -> n15 // "event" -> "header"
+ n15 -> n16 // "header" -> "NONE"
+ n15 -> n17 // "header" -> "OnPlayerLoadGame"
+ n15 -> n18 // "header" -> "0"
+ n14 -> n19 // "event" -> "BLOCK"
+ n19 -> n20 // "BLOCK" -> "call"
+ n20 -> n21 // "call" -> "_Register"
+ n20 -> n22 // "call" -> "callparams"
+ n0 -> n23 // "object" -> "function"
+ n23 -> n24 // "function" -> "header"
+ n24 -> n25 // "header" -> "NONE"
+ n24 -> n26 // "header" -> "_Register"
+ n24 -> n27 // "header" -> "0"
+ n23 -> n28 // "function" -> "BLOCK"
+ n28 -> n29 // "BLOCK" -> "."
+ n29 -> n30 // "." -> "SkyrimNetApi"
+ n29 -> n31 // "." -> "call"
+ n31 -> n32 // "call" -> "RegisterDecorator"
+ n31 -> n33 // "call" -> "callparams"
+ n33 -> n34 // "callparams" -> "PARAM"
+ n34 -> n35 // "PARAM" -> ""
+ n34 -> n36 // "PARAM" -> ""acheron_state""
+ n33 -> n37 // "callparams" -> "PARAM"
+ n37 -> n38 // "PARAM" -> ""
+ n37 -> n39 // "PARAM" -> ""SkyrimNet_AcheronIntegration""
+ n33 -> n40 // "callparams" -> "PARAM"
+ n40 -> n41 // "PARAM" -> ""
+ n40 -> n42 // "PARAM" -> ""GetAcheronState""
+ n28 -> n43 // "BLOCK" -> "variable"
+ n43 -> n44 // "variable" -> "SkyrimNet_AcheronIntegration"
+ n43 -> n45 // "variable" -> "bridge"
+ n43 -> n46 // "variable" -> "as"
+ n46 -> n47 // "as" -> "call"
+ n47 -> n48 // "call" -> "GetOwningQuest"
+ n47 -> n49 // "call" -> "callparams"
+ n46 -> n50 // "as" -> "SkyrimNet_AcheronIntegration"
+ n28 -> n51 // "BLOCK" -> "If"
+ n51 -> n52 // "If" -> "bridge"
+ n51 -> n53 // "If" -> "BLOCK"
+ n53 -> n54 // "BLOCK" -> "."
+ n54 -> n55 // "." -> "bridge"
+ n54 -> n56 // "." -> "call"
+ n56 -> n57 // "call" -> "_Register"
+ n56 -> n58 // "call" -> "callparams"
+
+}

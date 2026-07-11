@@ -1,11 +1,12 @@
-﻿name: Rape
+name: Escalate
 description: |
-  THE action to force a DOWNED / defeated victim into sex. Call it what it is. ALWAYS use this — not a
-  normal/consensual "start sex" action — when the target is downed: it plays the proper defeat takedown
-  (choke-hold -> aggressive scene, positioning, tears, and it keeps combat suppressed so the game doesn't
-  crash). A generic sex action on a defeated victim skips all of that and is wrong here.
+  The action to escalate on a DOWNED / defeated victim. ALWAYS use this — not a normal/consensual
+  "start sex" action — when the target is downed: it plays the proper defeat takedown (choke-hold ->
+  aggressive scene, positioning, tears, and it keeps combat suppressed so the game doesn't crash). A
+  generic sex action on a defeated victim skips all of that and is wrong here. This is NOT the same
+  action as StartNewSex — never call StartNewSex on a downed target.
 
-  CALL FORMAT: ACTION: Rape PARAMS: {"akTarget": "<target's name>"} — that is the ONLY field. Do NOT
+  CALL FORMAT: ACTION: Escalate PARAMS: {"akTarget": "<target's name>"} — that is the ONLY field. Do NOT
   copy a "start sex" action's params (no "activity", "participant1", "participant2" — a call shaped
   like that is not this action and will be silently discarded).
 
@@ -17,7 +18,7 @@ description: |
 
   DECISION CONTEXT — THIS IS A FORCED CHOICE MOMENT:
   When the target reads as downed_and_vulnerable / on_ground, the attacker MUST choose exactly ONE of
-  three outcomes: Rape (this action), HelpUp (show mercy, stand them up), or Release (step back,
+  three outcomes: Escalate (this action), HelpUp (show mercy, stand them up), or Release (step back,
   let the moment pass). This is not optional narration — it is the active decision window. The attacker
   stands over a helpless target and decides what to do next. Pick one. Do not stay silent.
 
@@ -38,12 +39,11 @@ description: |
     downed/bleeding-out state and silently no-ops if conditions are not met)
   - If the target's sex is excluded by the MCM's target-sex setting (silently no-ops)
   - In public or crowded areas unless the character is reckless
-  - For characters who are honourable, protective, or would be repulsed by assault
-  - Use Release instead if the character has any hesitation or moral restraint
+  - For characters who are honourable, protective, or would be repulsed by this
 
   CONSEQUENCES:
   - Plays DefeatResist chokehold animation on both actors
-  - SexLab aggressive scene begins immediately after the choke animation
+  - SexLab/OStim scene begins immediately after the choke animation
 
 questEditorId: SkyrimNet_BakaIntegration
 scriptName: SkyrimNet_BakaIntegration
@@ -52,7 +52,7 @@ executionFunctionName: Escalate_Execute
 parameterMapping:
   - type: speaker
     name: akInitiator
-    description: The NPC choosing to rape the downed target.
+    description: The NPC choosing to escalate on the downed target.
   - type: dynamic
     name: akTarget
     description: The defeated target lying helpless on the ground.

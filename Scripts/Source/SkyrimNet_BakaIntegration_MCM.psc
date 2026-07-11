@@ -14,6 +14,8 @@ Int _stageDurOID
 Int _cooldownOID
 Int _resistEnabledOID
 Int _resistDifficultyOID
+Int _npcEscapeChanceOID
+Int _npcStageTimeOID
 Int _escalationWindowOID
 Int _escalationDifficultyOID
 Int _spankPlayerOID
@@ -27,10 +29,24 @@ Int _exprIntensityOID
 Int _creatureEscOID
 Int _creatureOnPCOID
 Int _creatureCombatOID
+Int _creatureFollowerHitOID
+Int _creatureSceneOID
+Int _llmGateOID
+Int _notifyOID
+Int _debugLogOID
 Int _creatureVictimSexOID
 Int _creatureBackendOID
 Int _creatureSuccessOID
+Int _creatureHitChanceOID
+Int _humanOnHitOID
+Int _humanHitChanceOID
+Int _escapeGraceOID
+Int _creatureStruggleDurOID
+Int _creatureGraceOID
+Int _creatureGroupSizeOID
 Int _sellSlaveryOID
+Int _followerSlaveryOID
+Int _slaveryDistOID
 
 Event OnConfigInit()
     ModName = "Baka SkyrimNet"
@@ -77,9 +93,23 @@ Event OnPageReset(String page)
         _cooldownOID       = AddSliderOption("AI Action Cooldown",    Main.fNPCGlobalCooldown, "{0}s")
         AddEmptyOption()
         AddHeaderOption("Capture")
-        ; OFF removes the Sell-to-Slavery action entirely (not offered to the LLM). Keep ON only if you
-        ; want the Simple Slavery Plus Plus hand-off; it no-ops anyway when SS++ isn't installed.
-        _sellSlaveryOID    = AddToggleOption("Allow Sell to Slavery",  Main.bSellToSlavery)
+        ; OFF removes the Sell-to-Slavery action entirely (not offered to the LLM). Detection first:
+        ; with Simple Slavery Plus Plus absent the toggle renders greyed-out and inert instead of
+        ; pretending the feature exists -- same plugin-presence pattern Ostim_interactions uses for
+        ; Stage Flow (detect the actual .esp, gate the UI on it).
+        If Main.IsSimpleSlaveryInstalled()
+            _sellSlaveryOID = AddToggleOption("Allow Sell to Slavery",  Main.bSellToSlavery)
+        Else
+            _sellSlaveryOID = AddToggleOption("Allow Sell to Slavery (Simple Slavery++ not installed)", False, OPTION_FLAG_DISABLED)
+        EndIf
+        ; Same presence-gated pattern for the FOLLOWER slavery action (Follower Slavery Mod). Its
+        ; readiness flag only flips after the player clicks Install in FSM's own MCM.
+        If Main.IsFollowerSlaveryInstalled()
+            _followerSlaveryOID = AddToggleOption("Allow Follower Enslavement", Main.bFollowerSlavery)
+        Else
+            _followerSlaveryOID = AddToggleOption("Allow Follower Enslavement (FSM not installed)", False, OPTION_FLAG_DISABLED)
+        EndIf
+        _slaveryDistOID = AddSliderOption("Player Distance to Allow It", Main.fSlaveryPlayerDistance, "{0}")
     ElseIf page == "Timing"
         SetCursorFillMode(TOP_TO_BOTTOM)
         AddHeaderOption("Animation Durations")
@@ -94,6 +124,11 @@ Event OnPageReset(String page)
         _resistEnabledOID        = AddToggleOption("Enable Resist Minigame",    Main.bResistEnabled)
         _resistDifficultyOID     = AddSliderOption("Escape Difficulty",          Main.fResistDifficulty,    "{0}%")
         AddTextOption("QTE Keys", "Configured in Flash Games - Struggling QTE  (WASD / d-pad)", OPTION_FLAG_DISABLED)
+        AddEmptyOption()
+        AddHeaderOption("NPC-vs-NPC Struggle (no QTE, auto-rolled)")
+        _npcEscapeChanceOID = AddSliderOption("Victim Escape Chance", Main.fNPCEscapeChance, "{0}%")
+        _npcStageTimeOID    = AddSliderOption("Stage Duration",       Main.fNPCStageTime,    "{0}s")
+        _escapeGraceOID     = AddSliderOption("Post-Escape Grace",    Main.fEscapeGraceDuration, "{0}s")
         AddEmptyOption()
         AddHeaderOption("Defeat window (fallback only)")
         _escalationWindowOID     = AddSliderOption("Escalation Window",  Main.fEscalationWindow,    "{0}s")
@@ -120,9 +155,21 @@ Event OnPageReset(String page)
         _creatureEscOID       = AddToggleOption("Enable Creature Escalation", Main.bCreatureEscalation)
         _creatureOnPCOID      = AddToggleOption("Can Target the Player",      Main.bCreatureOnPlayer)
         _creatureCombatOID    = AddToggleOption("Allow Mid-Combat",           Main.bCreatureCombatAllowed)
+        _creatureFollowerHitOID = AddToggleOption("Escalate on Hit Mid-Combat (followers + player)", Main.bCreatureEscalateFollowersOnHit)
+        _creatureSceneOID     = AddToggleOption("Escalate to Sex After Win", Main.bCreatureSceneAllowed)
+        _llmGateOID           = AddToggleOption("LLM Decides Escalations",   Main.bLLMGateEscalation)
+        _notifyOID            = AddToggleOption("Show Corner Notifications", Main.bShowNotifications)
+        _debugLogOID          = AddToggleOption("Enable Debug Logging",      Main.bDebugLog)
         _creatureVictimSexOID = AddMenuOption("Victim Sex Allowed",  _victimSexName(Main.iCreatureVictimSex))
         _creatureBackendOID   = AddMenuOption("Creature Framework",  _backendName(Main.iCreatureBackend))
         _creatureSuccessOID   = AddSliderOption("NPC Success Chance", Main.iCreatureSuccessPct as Float, "{0}%")
+        _creatureHitChanceOID = AddSliderOption("Chance to Struggle on Hit", Main.iCreatureHitEngageChance as Float, "{0}%")
+        _creatureStruggleDurOID = AddSliderOption("Struggle Duration", Main.fCreatureStruggleDuration, "{1}s")
+        _creatureGraceOID     = AddSliderOption("Post-Defeat Grace",   Main.fPostDefeatGraceDuration, "{0}s")
+        _creatureGroupSizeOID = AddSliderOption("Max Group Size",      Main.iCreatureGroupMaxSize as Float, "{0}")
+        AddHeaderOption("Humanoids (mid-combat)")
+        _humanOnHitOID       = AddToggleOption("Escalate on Hit Mid-Combat (followers + player)", Main.bHumanEscalateOnHit)
+        _humanHitChanceOID   = AddSliderOption("Chance to Struggle on Hit", Main.iHumanHitEngageChance as Float, "{0}%")
     EndIf
 EndEvent
 
@@ -151,6 +198,15 @@ Event OnOptionSelect(Int option)
             SkyrimNetApi.UnregisterAction("SellToSlavery")
             Debug.Notification("Sell to Slavery disabled and removed from the action menu.")
         EndIf
+    ElseIf option == _followerSlaveryOID
+        Main.bFollowerSlavery = !Main.bFollowerSlavery
+        SetToggleOptionValue(_followerSlaveryOID, Main.bFollowerSlavery)
+        If Main.bFollowerSlavery
+            Debug.Notification("Follower Enslavement enabled (returns to the action menu after a reload).")
+        Else
+            SkyrimNetApi.UnregisterAction("EnslaveFollower")
+            Debug.Notification("Follower Enslavement disabled and removed from the action menu.")
+        EndIf
     ElseIf option == _resistEnabledOID
         Main.bResistEnabled = !Main.bResistEnabled
         SetToggleOptionValue(_resistEnabledOID, Main.bResistEnabled)
@@ -175,6 +231,24 @@ Event OnOptionSelect(Int option)
     ElseIf option == _creatureCombatOID
         Main.bCreatureCombatAllowed = !Main.bCreatureCombatAllowed
         SetToggleOptionValue(_creatureCombatOID, Main.bCreatureCombatAllowed)
+    ElseIf option == _creatureFollowerHitOID
+        Main.bCreatureEscalateFollowersOnHit = !Main.bCreatureEscalateFollowersOnHit
+        SetToggleOptionValue(_creatureFollowerHitOID, Main.bCreatureEscalateFollowersOnHit)
+    ElseIf option == _creatureSceneOID
+        Main.bCreatureSceneAllowed = !Main.bCreatureSceneAllowed
+        SetToggleOptionValue(_creatureSceneOID, Main.bCreatureSceneAllowed)
+    ElseIf option == _llmGateOID
+        Main.bLLMGateEscalation = !Main.bLLMGateEscalation
+        SetToggleOptionValue(_llmGateOID, Main.bLLMGateEscalation)
+    ElseIf option == _notifyOID
+        Main.bShowNotifications = !Main.bShowNotifications
+        SetToggleOptionValue(_notifyOID, Main.bShowNotifications)
+    ElseIf option == _debugLogOID
+        Main.bDebugLog = !Main.bDebugLog
+        SetToggleOptionValue(_debugLogOID, Main.bDebugLog)
+    ElseIf option == _humanOnHitOID
+        Main.bHumanEscalateOnHit = !Main.bHumanEscalateOnHit
+        SetToggleOptionValue(_humanOnHitOID, Main.bHumanEscalateOnHit)
     EndIf
 EndEvent
 
@@ -295,6 +369,26 @@ Event OnOptionSliderOpen(Int option)
         SetSliderDialogDefaultValue(70.0)
         SetSliderDialogRange(10.0, 95.0)
         SetSliderDialogInterval(5.0)
+    ElseIf option == _npcEscapeChanceOID
+        SetSliderDialogStartValue(Main.fNPCEscapeChance)
+        SetSliderDialogDefaultValue(35.0)
+        SetSliderDialogRange(0.0, 100.0)
+        SetSliderDialogInterval(5.0)
+    ElseIf option == _npcStageTimeOID
+        SetSliderDialogStartValue(Main.fNPCStageTime)
+        SetSliderDialogDefaultValue(5.0)
+        SetSliderDialogRange(1.0, 15.0)
+        SetSliderDialogInterval(0.5)
+    ElseIf option == _escapeGraceOID
+        SetSliderDialogStartValue(Main.fEscapeGraceDuration)
+        SetSliderDialogDefaultValue(4.0)
+        SetSliderDialogRange(0.0, 30.0)
+        SetSliderDialogInterval(1.0)
+    ElseIf option == _slaveryDistOID
+        SetSliderDialogStartValue(Main.fSlaveryPlayerDistance)
+        SetSliderDialogDefaultValue(1500.0)
+        SetSliderDialogRange(500.0, 6000.0)
+        SetSliderDialogInterval(100.0)
     ElseIf option == _escalationWindowOID
         SetSliderDialogStartValue(Main.fEscalationWindow)
         SetSliderDialogDefaultValue(20.0)
@@ -325,6 +419,31 @@ Event OnOptionSliderOpen(Int option)
         SetSliderDialogDefaultValue(50.0)
         SetSliderDialogRange(0.0, 100.0)
         SetSliderDialogInterval(5.0)
+    ElseIf option == _creatureHitChanceOID
+        SetSliderDialogStartValue(Main.iCreatureHitEngageChance as Float)
+        SetSliderDialogDefaultValue(25.0)
+        SetSliderDialogRange(0.0, 100.0)
+        SetSliderDialogInterval(5.0)
+    ElseIf option == _creatureStruggleDurOID
+        SetSliderDialogStartValue(Main.fCreatureStruggleDuration)
+        SetSliderDialogDefaultValue(20.0)
+        SetSliderDialogRange(5.0, 40.0)
+        SetSliderDialogInterval(1.0)
+    ElseIf option == _creatureGraceOID
+        SetSliderDialogStartValue(Main.fPostDefeatGraceDuration)
+        SetSliderDialogDefaultValue(100.0)
+        SetSliderDialogRange(0.0, 300.0)
+        SetSliderDialogInterval(10.0)
+    ElseIf option == _creatureGroupSizeOID
+        SetSliderDialogStartValue(Main.iCreatureGroupMaxSize as Float)
+        SetSliderDialogDefaultValue(3.0)
+        SetSliderDialogRange(1.0, 3.0)
+        SetSliderDialogInterval(1.0)
+    ElseIf option == _humanHitChanceOID
+        SetSliderDialogStartValue(Main.iHumanHitEngageChance as Float)
+        SetSliderDialogDefaultValue(25.0)
+        SetSliderDialogRange(0.0, 100.0)
+        SetSliderDialogInterval(5.0)
     EndIf
 EndEvent
 
@@ -350,6 +469,21 @@ Event OnOptionSliderAccept(Int option, Float value)
     ElseIf option == _resistDifficultyOID
         Main.fResistDifficulty = value
         SetSliderOptionValue(_resistDifficultyOID, value, "{0}%")
+    ElseIf option == _npcEscapeChanceOID
+        Main.fNPCEscapeChance = value
+        SetSliderOptionValue(_npcEscapeChanceOID, value, "{0}%")
+    ElseIf option == _npcStageTimeOID
+        Main.fNPCStageTime = value
+        SetSliderOptionValue(_npcStageTimeOID, value, "{0}s")
+    ElseIf option == _escapeGraceOID
+        Main.fEscapeGraceDuration = value
+        ; StorageUtil mirror: the Acheron bridge applies the same grace after its get-up key QTE win,
+        ; and (no hard script reference between the mods, by design) reads this shared key instead.
+        StorageUtil.SetFloatValue(Game.GetPlayer(), "SNBaka.EscapeGraceDuration", value)
+        SetSliderOptionValue(_escapeGraceOID, value, "{0}s")
+    ElseIf option == _slaveryDistOID
+        Main.fSlaveryPlayerDistance = value
+        SetSliderOptionValue(_slaveryDistOID, value, "{0}")
     ElseIf option == _escalationWindowOID
         Main.fEscalationWindow = value
         SetSliderOptionValue(_escalationWindowOID, value, "{0}s")
@@ -369,6 +503,21 @@ Event OnOptionSliderAccept(Int option, Float value)
     ElseIf option == _creatureSuccessOID
         Main.iCreatureSuccessPct = value as Int
         SetSliderOptionValue(_creatureSuccessOID, value, "{0}%")
+    ElseIf option == _creatureHitChanceOID
+        Main.iCreatureHitEngageChance = value as Int
+        SetSliderOptionValue(_creatureHitChanceOID, value, "{0}%")
+    ElseIf option == _humanHitChanceOID
+        Main.iHumanHitEngageChance = value as Int
+        SetSliderOptionValue(_humanHitChanceOID, value, "{0}%")
+    ElseIf option == _creatureStruggleDurOID
+        Main.fCreatureStruggleDuration = value
+        SetSliderOptionValue(_creatureStruggleDurOID, value, "{1}s")
+    ElseIf option == _creatureGraceOID
+        Main.fPostDefeatGraceDuration = value
+        SetSliderOptionValue(_creatureGraceOID, value, "{0}s")
+    ElseIf option == _creatureGroupSizeOID
+        Main.iCreatureGroupMaxSize = value as Int
+        SetSliderOptionValue(_creatureGroupSizeOID, value, "{0}")
     EndIf
 EndEvent
 
@@ -397,6 +546,12 @@ Event OnOptionHighlight(Int option)
         SetOptionHighlightText("When enabled, the Flash Games QTE overlay appears during forced animations. Player can fight back using the configured keys.")
     ElseIf option == _resistDifficultyOID
         SetOptionHighlightText("How easy it is to escape the main QTE. 70 = default. Higher = easier. Lower = harder.")
+    ElseIf option == _npcEscapeChanceOID
+        SetOptionHighlightText("NPC-vs-NPC struggles (no player involved, no QTE): the victim's % chance to break free, auto-rolled. Lower = the attacker wins more often. Default 35%.")
+    ElseIf option == _npcStageTimeOID
+        SetOptionHighlightText("NPC-vs-NPC struggles: how long each animation stage holds before advancing to the next. Default 5s.")
+    ElseIf option == _escapeGraceOID
+        SetOptionHighlightText("Mercy window: at every exit from a struggle or sex scene (won QTE, NPC escape, get-up key, or the scene simply ending), the victim stays untouchable for this many seconds instead of being spawn-killed the frame protection drops. They can still fight and move during it. 0 disables. Default 4s.")
     ElseIf option == _escalationWindowOID
         SetOptionHighlightText("FALLBACK ONLY (used when Acheron is not installed): seconds the attacker has to escalate after a QTE defeat. With Acheron, the downed state is owned by the Acheron bridge instead.")
     ElseIf option == _escalationDifficultyOID
@@ -412,7 +567,11 @@ Event OnOptionHighlight(Int option)
     ElseIf option == _spankHealFactorOID
         SetOptionHighlightText("In-game hours for each mark stage to heal away. At 2: full marks heal in about 8 in-game hours.")
     ElseIf option == _sellSlaveryOID
-        SetOptionHighlightText("ON offers the Sell-to-Slavery action (Simple Slavery Plus Plus hand-off; no-ops without SS++). OFF removes it from the LLM's menu entirely.")
+        SetOptionHighlightText("ON offers the Sell-to-Slavery action (Simple Slavery Plus Plus hand-off; no-ops without SS++). Targets the DEFEATED PLAYER only. OFF removes it from the LLM's menu entirely.")
+    ElseIf option == _followerSlaveryOID
+        SetOptionHighlightText("ON lets NPCs enslave a DOWNED FOLLOWER via the Follower Slavery Mod — only while the player is downed too or farther than the distance slider. Never targets the player (that's Sell to Slavery). PERMANENT until freed through FSM; default OFF.")
+    ElseIf option == _slaveryDistOID
+        SetOptionHighlightText("Follower Enslavement only fires if the player is at least this far from the downed follower (or downed themselves) — close enough to intervene means it never happens. Default 1500 (~21m).")
     ElseIf option == _sexBackendOID
         SetOptionHighlightText("Which framework plays escalation sex scenes: Auto (SexLab if present, else OStim), or force one. Neither is required; without one, escalation just narrates.")
     ElseIf option == _expressionsOID
@@ -425,11 +584,33 @@ Event OnOptionHighlight(Int option)
         SetOptionHighlightText("Allow creatures to target the PLAYER (not just NPCs). Requires Creature Escalation to be on.")
     ElseIf option == _creatureCombatOID
         SetOptionHighlightText("Allow a creature to STRUGGLE a victim down mid-combat. The creature's sex scene itself still waits until combat is fully over.")
+    ElseIf option == _creatureFollowerHitOID
+        SetOptionHighlightText("A creature's own melee hit on a follower or the player can attempt the struggle directly, mid-combat, without waiting for them to go down first. Player also needs 'Can Target the Player' on. Requires Allow Mid-Combat and Creature Escalation too.")
+    ElseIf option == _creatureSceneOID
+        SetOptionHighlightText("ON: a creature winning its struggle claims the victim in a sex scene (needs matching animations installed). OFF: struggles still happen — read as a beast mauling its prey — but a win just leaves the victim downed; no scene ever starts.")
+    ElseIf option == _llmGateOID
+        SetOptionHighlightText("Before a creature claims a DOWNED victim, ask the SkyrimNet LLM a yes/no ('should this escalation happen right now?'). NO backs that victim off ~30s; any LLM error counts as YES. On-hit mid-combat grapples are not gated (an LLM round-trip is too slow for live melee).")
+    ElseIf option == _notifyOID
+        SetOptionHighlightText("Show this mod's top-left corner messages ('X collapses...', 'What will you do to...', etc.). Turn OFF for a clean HUD — narration, dialogue and log traces are unaffected.")
+    ElseIf option == _debugLogOID
+        SetOptionHighlightText("Write this mod's detailed traces to the Papyrus log. Keep ON while testing/reporting issues (the log is how problems get diagnosed); turn OFF for less script-engine load during normal play.")
     ElseIf option == _creatureVictimSexOID
         SetOptionHighlightText("Which victim sex creatures may target: Both, Female only, or Male only.")
     ElseIf option == _creatureBackendOID
         SetOptionHighlightText("Which framework plays creature sex scenes (Auto / SexLab / OStim).")
     ElseIf option == _creatureSuccessOID
-        SetOptionHighlightText("Chance a creature's struggle succeeds against an NPC not yet downed. A downed victim is always taken. Default 50%.")
+        SetOptionHighlightText("Chance a creature's struggle succeeds against an NPC, whether or not they're already downed. Default 50%.")
+    ElseIf option == _creatureHitChanceOID
+        SetOptionHighlightText("Chance that a creature's melee hit on a follower attempts the struggle at all (see 'Escalate on Followers Mid-Combat'). Lower this if it triggers too often. Default 25%.")
+    ElseIf option == _creatureStruggleDurOID
+        SetOptionHighlightText("How long the mid-combat struggle animation holds before the outcome is decided. Default 20s.")
+    ElseIf option == _creatureGraceOID
+        SetOptionHighlightText("After a victim loses a struggle, how many seconds creatures leave them alone before reconsidering them — ends early if real combat resumes. Default 100s.")
+    ElseIf option == _creatureGroupSizeOID
+        SetOptionHighlightText("Once a scene is actually starting, look for up to this many creatures of the same kind nearby to join in (2v1/3v1). 1 = always solo. Decided fresh each time, after the outcome is known.")
+    ElseIf option == _humanOnHitOID
+        SetOptionHighlightText("A hostile HUMANOID's melee hit on a follower or the player can attempt a Struggle right there, mid-combat — the humanoid counterpart of the creature option above. Uses the normal Struggle rules on top (QTE for the player, sex filter, 'Player Can Be Target', locks). Default OFF.")
+    ElseIf option == _humanHitChanceOID
+        SetOptionHighlightText("Chance that a hostile humanoid's melee hit attempts the Struggle at all (shares the same 3s per-victim cooldown as the creature version). Lower this if it triggers too often. Default 25%.")
     EndIf
 EndEvent

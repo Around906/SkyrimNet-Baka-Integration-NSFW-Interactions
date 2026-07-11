@@ -58,3 +58,14 @@ Function ShowDownedMenu(Actor akCaster, Actor akVictim) Global Native
 ;   13      = player self-spank
 ;  -1       = cancel
 Function ShowSexSpankMenu(String json) Global Native
+
+; Ground truth for who just hit akTarget, cached natively at the exact moment TESHitEvent fired.
+; GetCombatTarget() is reliable enough for a follower victim (real AI targeting) but not necessarily
+; for the player, so OnCreatureHitFollower uses this instead when the victim is the player.
+; Returns None if nobody hit akTarget recently enough to still be cached.
+Actor Function GetLastHitAggressor(Actor akTarget) Global Native
+
+; Updates the ambient "charging toward 3s" get-up-key HUD bar (a separate, non-modal overlay -- never
+; pauses the game, unlike the menus above). afPct: 0.0 (just pressed) .. 1.0 (fully charged, releasing
+; now starts the QTE). Any negative value hides the bar. Safe to call every tick while the key is held.
+Function SetGetUpCharge(Float afPct) Global Native

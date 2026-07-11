@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SNBaka HUD</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+
+  body {
+    width: 100vw; height: 100vh;
+    overflow: hidden;
+    background: transparent;
+    font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+    color: #e8d9b0;
+  }
+
+  /* Ambient, non-modal overlay -- never focused/paused, matches Ostim_interactions' OII_Hud pattern.
+     Sits low-center so it doesn't collide with SNBaka_Menu's own centered modal panels. */
+  #getupWrap {
+    position: fixed;
+    left: 50%;
+    bottom: 160px;
+    transform: translateX(-50%) translateY(10px);
+    opacity: 0;
+    zoom: 1.5;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    pointer-events: none;
+    text-align: center;
+  }
+  #getupWrap.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  #getupLabel {
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #c4a248;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    margin-bottom: 5px;
+  }
+  #getupLabel.ready { color: #7be05a; }
+
+  #getupBarOuter {
+    width: 180px;
+    height: 9px;
+    border-radius: 5px;
+    background: rgba(10,8,5,0.8);
+    border: 1px solid rgba(139,105,20,0.55);
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.6), inset 0 0 6px rgba(0,0,0,0.5);
+  }
+  #getupBarFill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #7a5320, #e0b84a);
+    transition: width 0.05s linear, background 0.15s ease;
+  }
+  #getupBarFill.ready {
+    background: linear-gradient(90deg, #2f6a24, #7be05a);
+    box-shadow: 0 0 8px rgba(123,224,90,0.7);
+  }
+</style>
+</head>
+<body>
+<div id="getupWrap">
+  <div id="getupLabel">Struggling to rise&hellip;</div>
+  <div id="getupBarOuter"><div id="getupBarFill"></div></div>
+</div>
+
+<script>
+(function () {
+  var wrap  = document.getElementById('getupWrap');
+  var fill  = document.getElementById('getupBarFill');
+  var label = document.getElementById('getupLabel');
+
+  window.snbakaSetGetUpCharge = function (pct) {
+    if (pct < 0) {
+      wrap.classList.remove('show');
+      return;
+    }
+    wrap.classList.add('show');
+    var clamped = Math.max(0, Math.min(1, pct));
+    var ready = clamped >= 1;
+    fill.style.width = (clamped * 100) + '%';
+    fill.classList.toggle('ready', ready);
+    label.classList.toggle('ready', ready);
+    label.textContent = ready ? 'Ready!' : 'Struggling to rise…';
+  };
+})();
+</script>
+</body>
+</html>

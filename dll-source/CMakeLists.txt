@@ -5,6 +5,18 @@ if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
 endif()
 
+# VCPKG_TARGET_TRIPLET=x64-windows-static (set by build_plugin.bat) builds spdlog/fmt/etc against the
+# static CRT (/MT) -- the standard choice for SKSE plugins, so end users don't need a matching VC++
+# Redistributable. CMake's own default for our OWN sources is still /MD unless told otherwise, which
+# means our object files silently link against a DIFFERENT CRT than vcpkg's static libs -- confirmed
+# real build failure: LNK2038 "RuntimeLibrary mismatch" against spdlog.lib/fmt.lib/libcpmt.lib on a
+# clean rebuild. CMP0091 must be set NEW before project() for CMAKE_MSVC_RUNTIME_LIBRARY to actually
+# take effect.
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 project(
     SkyrimNet_BakaIntegration
     VERSION 1.4.1
@@ -35,6 +47,7 @@ add_commonlibsse_plugin(${PROJECT_NAME}
     src/PrismaUIBridge.cpp
     src/PapyrusFunctions.cpp
     src/SkyrimNetBridge.cpp
+    src/HitEventSink.cpp
     NAME ${PROJECT_NAME}
     AUTHOR "Dag"
     EMAIL ""

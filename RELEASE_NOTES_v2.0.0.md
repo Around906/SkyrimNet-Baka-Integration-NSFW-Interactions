@@ -19,8 +19,8 @@ its own action the LLM can call directly and reason about individually:
 - **CreatureEscalate** — a creature acting on a downed or vulnerable human, with its own struggle
   animation matched to the creature type, entirely independent of the LLM (creatures can't reliably
   choose actions on their own, so this runs as a direct Papyrus pipeline instead).
-- **Escalate renamed to Rape** — same behavior, but the name no longer risks being confused with
-  `StartNewSex` or read as ambiguous by the LLM. Every cue and description was updated to match.
+- **Escalate** — the action to force a downed/defeated victim into sex, kept distinct from `StartNewSex`
+  in its description so the LLM doesn't confuse the two. Every cue and description was updated to match.
 
 ## New: NPC solo poses & body language, defeat-pose variety
 
