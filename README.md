@@ -59,7 +59,13 @@ characters striking fitting body language while they speak.
   weapon-delivered hit (melee, **fists**, **arrows/bolts** — never spells or stray magic) on a
   defeated actor is a killing blow. Essential/protected actors survive it; victims mid-struggle or
   mid-scene are untouchable, and every exit carries a short post-escape mercy window so nobody gets
-  spawn-killed the frame protection drops
+  spawn-killed the frame protection drops. An **Execute** action (menu button + LLM-callable) gives a
+  guaranteed finishing blow that doesn't depend on a weapon hit actually landing and registering.
+- **Tied prisoners** — bind a defeated victim (**TieUp**) instead of resolving them immediately: they
+  stay down for an MCM-configured number of game hours (default 12), can't struggle free or
+  auto-recover while bound, and can still be escalated on and returned to their bound pose
+  afterward. **Untie** cuts them loose to a normal down; **HelpUp** does both at once. Bindings also
+  loosen on their own once the timer runs out.
 - **Facial expressions** — happy / angry / afraid / sad / pained / surprised / confused
   - LLM-triggerable *and* automatic in-scene (fear in a struggle, pain on a choke / bleedout, sadness while crying)
   - Adjustable intensity
@@ -111,6 +117,8 @@ MCM (and script properties) expose toggles:
 - **Slavery pair**: *Sell to Slavery* (defeated player → Simple Slavery++) and *Follower
   Enslavement* (downed follower → Follower Slavery Mod) with its player-distance slider — each
   grayed out until its mod is detected, each removable from the LLM's menu independently
+- **Tied Hours** — how many game hours a `TieUp` prisoner stays bound before the ropes loosen on
+  their own (default 12)
 - **Post-Escape Grace** — the untouchable mercy window after every struggle/scene exit
 - `bExpressionsEnabled` — facial-expression master switch
 - `fExpressionIntensity` (0.0–1.0) — how strong faces look
