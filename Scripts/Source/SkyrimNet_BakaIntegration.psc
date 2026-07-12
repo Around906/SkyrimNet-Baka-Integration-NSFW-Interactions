@@ -167,6 +167,10 @@ Bool Property bSellToSlavery       = True  Auto  ; allow the Sell-to-Slavery act
 ; the LLM can't confuse them. Default OFF: it permanently removes a follower from the party.
 Bool  Property bFollowerSlavery       = False  Auto
 Float Property fSlaveryPlayerDistance = 1500.0 Auto  ; player must be at least this far (or downed too) for EnslaveFollower to fire
+; TIED prisoners: a tied victim stays down in the captured pose for this many GAME hours — the
+; auto-get-up timer is suspended for the duration, so interrogations get all the time they need.
+; They cannot get up unless helped (HelpUp unties + lifts) or the binding lapses on its own.
+Float Property fTiedHours             = 12.0   Auto
 Int  Property iCreatureBackend     = 0     Auto  ; creature sex backend: 0=auto, 1=SexLab, 2=OStim
 Int  Property iCreatureSuccessPct  = 50    Auto  ; NPC-victim escape chance, both while not yet downed AND already downed
 ; How long a not-yet-downed NPC struggle holds the shared pose before rolling the outcome -- confirmed
@@ -3441,8 +3445,13 @@ Function _EscalationCleanup(Actor akA1, Actor akA2)
     If akA2 != PlayerRef
         Utility.Wait(1.5)
         If !akA2.IsDead()
-            Debug.SendAnimationEvent(akA2, "BleedoutStart")
-            _Log("[SNBaka] post-scene re-down: BleedoutStart enforced on " + akA2.GetDisplayName())
+            ; Respect a stored down pose (TIED victims return to the captured pose, not bleedout).
+            String rdPose2 = StorageUtil.GetStringValue(akA2, "SNBaka.DownPose", "")
+            If rdPose2 == ""
+                rdPose2 = "BleedoutStart"
+            EndIf
+            Debug.SendAnimationEvent(akA2, rdPose2)
+            _Log("[SNBaka] post-scene re-down: pose '" + rdPose2 + "' enforced on " + akA2.GetDisplayName())
         EndIf
     EndIf
     ; Immediate "still down" nudge — same one every other intermediate action gets via UnlockBoth.
@@ -5148,6 +5157,9 @@ Function _ForceRecover(Actor akActor, Bool abFullRescue = True)
     StorageUtil.SetStringValue(akActor, "SNBaka.DownPose",      "")
     StorageUtil.SetIntValue(akActor,    "SNBaka.Locked",        0)
     StorageUtil.SetIntValue(akActor,    "SNBaka.StopRequested", 0)
+    ; Being helped up IS the untie — a tied prisoner's one recovery path besides the tie lapsing.
+    StorageUtil.SetIntValue(akActor,    "SNBaka.Tied",          0)
+    StorageUtil.SetFloatValue(akActor,  "SNBaka.TiedUntilGT",   0.0)
     ; This used to be left set — only _OnVictimWon (a genuine struggle-escape) ever cleared it, so
     ; Release/HelpUp/Stand Back (everything routing through here) never actually ended the "captive"
     ; relationship this flag represents. Harmless on its own, but it's about to become load-bearing:
@@ -5260,8 +5272,11 @@ Function HelpUp_Execute(Actor akInitiator, Actor akTarget)
     ; for the same "reach down" beat) — no explicit reset after, it's a self-resetting vanilla idle.
     If akInitiator == PlayerRef
         ; No combat gate for the player: helping someone up mid-fight is a deliberate button press,
-        ; and skipping the beat here is exactly what read as "I did no action" in testing. If the
-        ; combat graph swallows the idle, it just doesn't play — harmless.
+        ; and skipping the beat here is exactly what read as "I did no action" in testing. Sheathe
+        ; first — the graph rejects idle events while a weapon is drawn (same fix as Tie/Untie).
+        akInitiator.SheatheWeapon()
+        Utility.Wait(0.8)
+        Game.ForceThirdPerson()   ; idles are invisible in first person
         Debug.SendAnimationEvent(akInitiator, "IdleTake")
         Utility.Wait(2.0)
     ElseIf !akInitiator.IsInCombat()
@@ -5454,6 +5469,11 @@ Function EnslaveFollower_Execute(Actor akCaptor, Actor akFollower)
         Return
     EndIf
     _Log("[SNBaka] EnslaveFollower: " + akCaptor.GetDisplayName() + " enslaves the downed " + akFollower.GetDisplayName())
+    ; Visual cue: the captor kneels over the follower, binding them for the road (captor is always
+    ; an NPC here, so the third-person-only Babo_Kneel is safe — same beat HelpUp/TieUp use).
+    Debug.SendAnimationEvent(akCaptor, "Babo_Kneel")
+    Utility.Wait(2.0)
+    Debug.SendAnimationEvent(akCaptor, "IdleForceDefaultState")
     ; Clean OUR entire state off the follower first (Acheron hold, locks, pacify, bonds, ghost) —
     ; FSM force-moves and re-manages them from here on; two systems must never co-own the actor.
     _ForceRecover(akFollower)
@@ -5475,6 +5495,111 @@ Function EnslaveFollower_Execute(Actor akCaptor, Actor akFollower)
     Else
         _Log("[SNBaka] EnslaveFollower: ERROR — ModEvent.Create failed, FSM handoff not sent")
     EndIf
+EndFunction
+
+; --- TieUp / Untie ---
+; A TIED victim is a downed actor held in the captured pose whose auto-get-up timer is suspended for
+; fTiedHours GAME hours (the bridge's tick honors SNBaka.Tied/TiedUntilGT): they cannot get up unless
+; helped (HelpUp unties and lifts them) or until the binding lapses, at which point they fall back to
+; a NORMAL down with a fresh timer. Built for keeping prisoners around to interrogate.
+Function TieUp_Execute(Actor akBinder, Actor akTarget)
+    _Log("[SNBakaACT] TieUp ENTER")
+    If !bEnabled || !akBinder || !akTarget
+        Return
+    EndIf
+    If akTarget == PlayerRef
+        _Log("[SNBaka] TieUp: blocked — never the player (their downed state already has its own rules)")
+        Return
+    EndIf
+    If _IsCreatureActor(akBinder) || _CreatureAnimKey(akBinder) != "" || _IsCreatureActor(akTarget) || _CreatureAnimKey(akTarget) != ""
+        _Log("[SNBaka] TieUp: blocked — creature involved")
+        Return
+    EndIf
+    If _IsDownedAny(akBinder) || akBinder.IsDead() || akTarget.IsDead()
+        _Log("[SNBaka] TieUp: blocked — binder downed/dead or target dead")
+        Return
+    EndIf
+    If !_IsDownedAny(akTarget)
+        _Log("[SNBaka] TieUp: blocked — target is not downed")
+        Return
+    EndIf
+    If IsActorLocked(akTarget) || IsInSexAnimation(akTarget)
+        _Log("[SNBaka] TieUp: blocked — target mid-interaction/scene")
+        Return
+    EndIf
+    If StorageUtil.GetIntValue(akTarget, "SNBaka.Tied", 0) == 1
+        _Log("[SNBaka] TieUp: already tied")
+        Return
+    EndIf
+    ; The binder crouches over them while tying the knots — same proven anim pair HelpUp uses:
+    ; IdleTake for the PLAYER (vanilla pick-up idle, has first-person data), Babo_Kneel for NPCs
+    ; (custom third-person-only kneel, never sent to the player). SHEATHE FIRST — the animation
+    ; graph silently rejects idle events while a weapon is drawn, which is exactly the reported
+    ; "no animation played" (a beat right after combat almost always has weapons out).
+    akBinder.SheatheWeapon()
+    Utility.Wait(0.8)
+    If akBinder == PlayerRef
+        Game.ForceThirdPerson()   ; idles are invisible in first person — the other "no animation" case
+        Debug.SendAnimationEvent(akBinder, "IdleTake")
+        Utility.Wait(2.0)
+    Else
+        Debug.SendAnimationEvent(akBinder, "Babo_Kneel")
+        Utility.Wait(2.0)
+        Debug.SendAnimationEvent(akBinder, "IdleForceDefaultState")
+    EndIf
+    ; TIED POSE: Babo's captured pose, full stop. The ZaZ pose pool was REMOVED after a confirmed
+    ; T-pose — a mod folder being present doesn't mean its animations were built into the behavior
+    ; graphs, and an unbuilt event T-poses the actor. Rule going forward: only base-game events and
+    ; the Baka Motion Data Pack (a hard requirement, always built) are ever sent. The pose is stored
+    ; as the actor's down pose so every restore path re-asserts it.
+    String tiedPose = "Babo_Captured_A1"
+    StorageUtil.SetIntValue(akTarget, "SNBaka.Tied", 1)
+    StorageUtil.SetFloatValue(akTarget, "SNBaka.TiedUntilGT", Utility.GetCurrentGameTime() + (fTiedHours / 24.0))
+    StorageUtil.SetStringValue(akTarget, "SNBaka.DownPose", tiedPose)
+    Debug.SendAnimationEvent(akTarget, tiedPose)
+    SkyrimNetApi.RegisterEvent("baka_tied", \
+        akBinder.GetDisplayName() + " binds the beaten " + akTarget.GetDisplayName() + " hand and foot — tied on the ground, going nowhere until someone cuts them loose.", \
+        akBinder, akTarget)
+    _Notify(akTarget.GetDisplayName() + " has been tied up.")
+    _Log("[SNBaka] TieUp: " + akTarget.GetDisplayName() + " tied for " + fTiedHours + " game hours")
+EndFunction
+
+Function Untie_Execute(Actor akCutter, Actor akTarget)
+    _Log("[SNBakaACT] Untie ENTER")
+    If !bEnabled || !akCutter || !akTarget
+        Return
+    EndIf
+    If StorageUtil.GetIntValue(akTarget, "SNBaka.Tied", 0) != 1
+        _Log("[SNBaka] Untie: target is not tied — nothing to cut")
+        Return
+    EndIf
+    If _IsDownedAny(akCutter) || akCutter.IsDead()
+        _Log("[SNBaka] Untie: blocked — cutter downed/dead")
+        Return
+    EndIf
+    ; Same crouch beat as TieUp/HelpUp — kneeling over them, cutting the bindings. Sheathe first:
+    ; the graph rejects idle events with a weapon drawn (the reported "untie has no animation").
+    akCutter.SheatheWeapon()
+    Utility.Wait(0.8)
+    If akCutter == PlayerRef
+        Game.ForceThirdPerson()   ; idles are invisible in first person
+        Debug.SendAnimationEvent(akCutter, "IdleTake")
+        Utility.Wait(2.0)
+    Else
+        Debug.SendAnimationEvent(akCutter, "Babo_Kneel")
+        Utility.Wait(2.0)
+        Debug.SendAnimationEvent(akCutter, "IdleForceDefaultState")
+    EndIf
+    StorageUtil.SetIntValue(akTarget, "SNBaka.Tied", 0)
+    StorageUtil.SetFloatValue(akTarget, "SNBaka.TiedUntilGT", 0.0)
+    StorageUtil.SetStringValue(akTarget, "SNBaka.DownPose", "")
+    ; Untied is NOT freed — they drop back to a NORMAL down: fresh full timer, normal recovery rules.
+    Debug.SendAnimationEvent(akTarget, "BleedoutStart")
+    StorageUtil.SetFloatValue(akTarget, "SNBaka.AutoGetUpDeadlineRT", Utility.GetCurrentRealTime() + StorageUtil.GetFloatValue(PlayerRef, "SNAcheron.AutoGetUpSeconds", 600.0))
+    SkyrimNetApi.RegisterEvent("baka_untied", \
+        akCutter.GetDisplayName() + " cuts " + akTarget.GetDisplayName() + " loose — still beaten and down, but no longer bound.", \
+        akCutter, akTarget)
+    _Log("[SNBaka] Untie: " + akTarget.GetDisplayName() + " untied (still downed, fresh timer)")
 EndFunction
 
 ; --- Escalate ---
@@ -5569,6 +5694,41 @@ Function _DispatchDownedAction(Int choice, Actor akCaster, Actor akVictim)
             Return
         EndIf
         _Log("[SNBaka] _DispatchDownedAction: victim no longer downed — ignoring")
+        Return
+    EndIf
+    If choice == 5
+        ; EXECUTE — a deliberate killing blow on the downed victim, the guaranteed alternative to the
+        ; hit-based execution (which depends on hit events surviving Acheron's hooks). Same rules:
+        ; essential/protected actors survive Actor.Kill; our claim is released first so nothing
+        ; fights the corpse. Never the player (their defeat IS the death alternative).
+        If akVictim == PlayerRef || akVictim.IsDead()
+            Return
+        EndIf
+        _Log("[SNBaka] _DispatchDownedAction: EXECUTE — " + akCaster.GetDisplayName() + " finishes " + akVictim.GetDisplayName())
+        ; Visual cue: the executor swings their equipped weapon at the body before it dies —
+        ; attackStart drives a real attack animation for player and NPC alike; if the graph
+        ; rejects it in some stance, the kill still lands, just without the flourish.
+        Debug.SendAnimationEvent(akCaster, "attackStart")
+        Utility.Wait(0.6)
+        SkyrimNetApi.RegisterEvent("baka_execution", \
+            akCaster.GetDisplayName() + " finishes the helpless " + akVictim.GetDisplayName() + " with a deliberate killing blow.", \
+            akCaster, akVictim)
+        StorageUtil.SetIntValue(akVictim, "SNAcheron.Held", 0)
+        StorageUtil.SetIntValue(akVictim, "SNBaka.OnGround", 0)
+        akVictim.Kill(akCaster)
+        Utility.Wait(0.5)
+        _Log("[SNBaka] _DispatchDownedAction: post-execute IsDead=" + akVictim.IsDead() + " (False = an essential flag blocked it)")
+        Return
+    ElseIf choice == 6
+        TieUp_Execute(akCaster, akVictim)
+        Return
+    ElseIf choice == 7
+        Untie_Execute(akCaster, akVictim)
+        Return
+    ElseIf choice == 3 && StorageUtil.GetIntValue(akVictim, "SNBaka.Tied", 0) == 1
+        ; Stand Back must not quietly free a TIED prisoner — the bindings are the point.
+        _Log("[SNBaka] _DispatchDownedAction: Stand Back refused — " + akVictim.GetDisplayName() + " is TIED (untie them first)")
+        _Notify(akVictim.GetDisplayName() + " is tied — cut them loose first.")
         Return
     EndIf
     If ours
@@ -6044,6 +6204,13 @@ Function _DoCreatureEscalation(Actor akCreature, Actor akVictim)
         ; feedback: "gets decided within seconds", hold the struggle 10-20s like the mid-combat case
         ; before deciding. Same roll odds as the old quick path (escaped = roll > pct ≡ succeed = roll <= pct).
         Bool escaped = _PlayCreatureStruggleNPC(akCreature, akVictim, a1, a2)
+        ; A TIED victim cannot break free — bound hands don't win struggles. The pin plays out the
+        ; same, but the outcome is always a claim (this was the one path that could "suddenly free"
+        ; a tied prisoner: winning an escape roll they physically shouldn't be able to attempt).
+        If escaped && StorageUtil.GetIntValue(akVictim, "SNBaka.Tied", 0) == 1
+            _Log("[SNBaka] CreatureEscalate(" + akVictim.GetDisplayName() + "): escape roll won but victim is TIED — bound victims cannot break free, treating as claimed")
+            escaped = False
+        EndIf
         succeed = !escaped
     EndIf
 
@@ -6346,8 +6513,14 @@ Function _DoCreatureEscalation(Actor akCreature, Actor akVictim)
             If akVictim != PlayerRef
                 Utility.Wait(1.5)
                 If !akVictim.IsDead()
-                    Debug.SendAnimationEvent(akVictim, "BleedoutStart")
-                    _Log("[SNBaka] post-scene re-down: BleedoutStart enforced on " + akVictim.GetDisplayName())
+                    ; Respect a stored down pose (a TIED victim goes back into the captured pose,
+                    ; not generic bleedout) — falls back to vanilla bleedout when none is stored.
+                    String rdPose = StorageUtil.GetStringValue(akVictim, "SNBaka.DownPose", "")
+                    If rdPose == ""
+                        rdPose = "BleedoutStart"
+                    EndIf
+                    Debug.SendAnimationEvent(akVictim, rdPose)
+                    _Log("[SNBaka] post-scene re-down: pose '" + rdPose + "' enforced on " + akVictim.GetDisplayName())
                 EndIf
             EndIf
         EndIf
@@ -7050,6 +7223,8 @@ Event OnDefeatedExecuted(String eventName, String strArg, Float numArg, Form sen
         None, victim)
     StorageUtil.SetIntValue(victim, "SNAcheron.Held", 0)   ; release our claim so nothing fights the corpse
     victim.Kill(None)
+    Utility.Wait(0.5)
+    _Log("[SNBaka] OnDefeatedExecuted: post-kill IsDead=" + victim.IsDead() + " (False here = something blocks Kill, e.g. an essential flag)")
 EndEvent
 
 Event OnAcheronForceRecoverRequest(String eventName, String strArg, Float numArg, Form sender)

@@ -1,0 +1,30 @@
+name: TieUp
+description: |
+  Bind a DEFEATED character hand and foot, leaving them tied on the ground as a prisoner. Use when a
+  captor wants to KEEP the downed victim around — for interrogation, ransom, deciding their fate
+  later — instead of resolving the moment now ("tie them up", "bind the prisoner", "they're not
+  going anywhere").
+
+  A tied prisoner stays down for many hours (MCM-configured) and CANNOT get up on their own — only
+  being helped up (which cuts them loose) or the bindings eventually loosening frees them. Never
+  target the player.
+
+  CONSEQUENCES:
+  - The victim is bound in the captured pose and stays helpless far longer than a normal defeat.
+  - Perfect setup for interrogation scenes, ransom talks, or leaving someone for later.
+
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: TieUp_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akBinder
+    description: The character doing the tying. Must be up and able.
+  - type: dynamic
+    name: akTarget
+    description: The DOWNED character being tied. Never the player.
+
+enabled: true
+defaultPriority: 6
+customCategory: SNBaka_Downed

@@ -25,12 +25,33 @@ RE::BSEventNotifyControl HitEventSink::ProcessEvent(const RE::TESHitEvent* a_eve
     // locks are still respected there. The defeated PLAYER stays immune -- their defeat IS the
     // death alternative.
     static RE::BGSKeyword* s_defeatedKW = nullptr;
+    static bool s_kwLogged = false;
     if (!s_defeatedKW) {
         s_defeatedKW = RE::TESForm::LookupByEditorID<RE::BGSKeyword>("AcheronDefeated");
+        if (!s_kwLogged) {
+            s_kwLogged = true;
+            SKSE::log::info("HitEventSink: AcheronDefeated keyword lookup -> {}",
+                            s_defeatedKW ? "resolved" : "NOT FOUND (falling back to bleedout life-state only)");
+        }
     }
-    if (s_defeatedKW && target != player && target->HasKeyword(s_defeatedKW)) {
+    // Defeated detection is deliberately belt-and-suspenders: the keyword lookup can silently fail
+    // (editor-ID maps don't reliably cover keywords on all setups -- confirmed live: zero execution
+    // lines despite repeated hits on a downed victim), so ALSO treat the bleedout life-state as
+    // "defeated". Bleedout == helpless == executable under the vanilla-mortality spec either way.
+    const bool isDefeated =
+        (s_defeatedKW && target->HasKeyword(s_defeatedKW)) ||
+        target->AsActorState()->GetLifeState() == RE::ACTOR_LIFE_STATE::kBleedout;
+    if (isDefeated && target != player) {
+        // Diagnostic: log EVERY hit that reaches a defeated body, filter outcome or not -- if the
+        // user whacks a downed victim and these lines don't appear, the hit events are being
+        // swallowed upstream (Acheron's damage hook) and detection must move to an OnHit cloak.
+        SKSE::log::info("HitEventSink: hit on DEFEATED '{}' (source={:X}, projectile={:X})",
+                        target->GetDisplayFullName(), a_event->source, a_event->projectile);
+        // NO cause requirement -- confirmed live: an arrow hit on a defeated target arrived with the
+        // shooter unresolvable (cause null), which silently skipped the execution. The shooter's
+        // identity doesn't matter for the kill; a dead cause is equally irrelevant.
         auto* execCause = skyrim_cast<RE::Actor*>(a_event->cause.get());
-        if (execCause && !execCause->IsDead()) {
+        {
             // Weapon-delivered only: melee swings, FISTS (source==0), and ARROWS/BOLTS (source is the
             // bow/crossbow, projectile set) all execute -- explicit spec. Spells, enchant procs, and
             // poison spit have a non-Weapon source and stay excluded, so a stray firebolt or an AoE
@@ -38,7 +59,8 @@ RE::BSEventNotifyControl HitEventSink::ProcessEvent(const RE::TESHitEvent* a_eve
             auto* execSrc = a_event->source ? RE::TESForm::LookupByID(a_event->source) : nullptr;
             if (!execSrc || execSrc->GetFormType() == RE::FormType::Weapon) {
                 SKSE::log::info("HitEventSink: execution -- weapon hit on defeated '{}' by '{}' (projectile={})",
-                                target->GetDisplayFullName(), execCause->GetDisplayFullName(),
+                                target->GetDisplayFullName(),
+                                execCause ? execCause->GetDisplayFullName() : "<unknown>",
                                 a_event->projectile != 0);
                 SKSE::ModCallbackEvent ev{"SNBaka_DefeatedExecuted"sv, ""sv, 0.0f, target};
                 SKSE::GetModCallbackEventSource()->SendEvent(&ev);

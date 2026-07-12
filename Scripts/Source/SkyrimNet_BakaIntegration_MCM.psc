@@ -47,6 +47,7 @@ Int _creatureGroupSizeOID
 Int _sellSlaveryOID
 Int _followerSlaveryOID
 Int _slaveryDistOID
+Int _tiedHoursOID
 
 Event OnConfigInit()
     ModName = "Baka SkyrimNet"
@@ -110,6 +111,7 @@ Event OnPageReset(String page)
             _followerSlaveryOID = AddToggleOption("Allow Follower Enslavement (FSM not installed)", False, OPTION_FLAG_DISABLED)
         EndIf
         _slaveryDistOID = AddSliderOption("Player Distance to Allow It", Main.fSlaveryPlayerDistance, "{0}")
+        _tiedHoursOID   = AddSliderOption("Tied Prisoner Duration",      Main.fTiedHours, "{0} h")
     ElseIf page == "Timing"
         SetCursorFillMode(TOP_TO_BOTTOM)
         AddHeaderOption("Animation Durations")
@@ -389,6 +391,11 @@ Event OnOptionSliderOpen(Int option)
         SetSliderDialogDefaultValue(1500.0)
         SetSliderDialogRange(500.0, 6000.0)
         SetSliderDialogInterval(100.0)
+    ElseIf option == _tiedHoursOID
+        SetSliderDialogStartValue(Main.fTiedHours)
+        SetSliderDialogDefaultValue(12.0)
+        SetSliderDialogRange(1.0, 72.0)
+        SetSliderDialogInterval(1.0)
     ElseIf option == _escalationWindowOID
         SetSliderDialogStartValue(Main.fEscalationWindow)
         SetSliderDialogDefaultValue(20.0)
@@ -484,6 +491,9 @@ Event OnOptionSliderAccept(Int option, Float value)
     ElseIf option == _slaveryDistOID
         Main.fSlaveryPlayerDistance = value
         SetSliderOptionValue(_slaveryDistOID, value, "{0}")
+    ElseIf option == _tiedHoursOID
+        Main.fTiedHours = value
+        SetSliderOptionValue(_tiedHoursOID, value, "{0} h")
     ElseIf option == _escalationWindowOID
         Main.fEscalationWindow = value
         SetSliderOptionValue(_escalationWindowOID, value, "{0}s")
@@ -572,6 +582,8 @@ Event OnOptionHighlight(Int option)
         SetOptionHighlightText("ON lets NPCs enslave a DOWNED FOLLOWER via the Follower Slavery Mod — only while the player is downed too or farther than the distance slider. Never targets the player (that's Sell to Slavery). PERMANENT until freed through FSM; default OFF.")
     ElseIf option == _slaveryDistOID
         SetOptionHighlightText("Follower Enslavement only fires if the player is at least this far from the downed follower (or downed themselves) — close enough to intervene means it never happens. Default 1500 (~21m).")
+    ElseIf option == _tiedHoursOID
+        SetOptionHighlightText("How many GAME hours a tied prisoner stays bound on the ground. While tied they cannot get up on their own — only Help Up (which cuts them loose) or the bindings lapsing frees them. Default 12 h.")
     ElseIf option == _sexBackendOID
         SetOptionHighlightText("Which framework plays escalation sex scenes: Auto (SexLab if present, else OStim), or force one. Neither is required; without one, escalation just narrates.")
     ElseIf option == _expressionsOID

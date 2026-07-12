@@ -27,6 +27,19 @@ Event OnEffectStart(Actor akTarget, Actor akCaster)
     ; Resolve the actor the player is aiming at (crosshair, then nearest). Includes creatures.
     Actor realTarget = SNBakaUI.GetInteractTarget()
 
+    ; HARD GUARD (explicit spec): the power must never touch an actor who is already mid-interaction —
+    ; locked in a struggle/paired animation, or inside an OStim/SexLab scene (ANY mod's; our Locked
+    ; flag only covers our own). Opening menus or firing an escalation on them yanks a running
+    ; interaction apart. (The CASTER's own in-scene case was already handled above — that's the
+    ; sex-spank menu, which exists precisely FOR scenes.)
+    If realTarget && (BakaMain.IsActorLocked(realTarget) || BakaMain.IsInSexAnimation(realTarget))
+        If dbg
+            Debug.Notification("[Baka] power: " + realTarget.GetDisplayName() + " is busy (struggle/scene) — not interrupting")
+            Debug.Trace("[SNBaka][POWER] blocked — target " + realTarget.GetDisplayName() + " is locked/mid-scene")
+        EndIf
+        Return
+    EndIf
+
     ; Aim at a BEAST -> creature escalation on the nearest valid victim (handles its own gating).
     ; Returns True only if it WAS a supported creature, so we stop here.
     If realTarget && BakaMain.TryCreatureEscalateFromPower(realTarget)

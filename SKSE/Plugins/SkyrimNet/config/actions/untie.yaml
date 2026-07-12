@@ -1,0 +1,27 @@
+name: Untie
+description: |
+  Cut a TIED prisoner's bindings loose. Use when a character decides the prisoner has been bound
+  long enough — mercy, a completed interrogation, a rescue — ("cut them loose", "untie the ropes").
+
+  The freed character is NOT rescued: they remain beaten and downed on the ground, just no longer
+  bound — normal downed rules resume (they can be helped up, or eventually recover on their own).
+  Only meaningful on a target that is actually tied.
+
+  CONSEQUENCES:
+  - The prisoner's bindings are removed; they stay downed but can now recover normally.
+
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: Untie_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akCutter
+    description: The character cutting the bindings. Must be up and able.
+  - type: dynamic
+    name: akTarget
+    description: The TIED character being cut loose.
+
+enabled: true
+defaultPriority: 5
+customCategory: SNBaka_Downed
