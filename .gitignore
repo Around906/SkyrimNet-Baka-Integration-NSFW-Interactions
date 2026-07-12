@@ -21,7 +21,9 @@ compile.bat
 *.zip
 *.rar
 *.7z
-*.bak
+*.bak*
+*.dot
+Scripts/pex_backup_*/
 
 # ───────────── Mod-manager / editor / agent local metadata ─────────────
 meta.ini
