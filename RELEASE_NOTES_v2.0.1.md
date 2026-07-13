@@ -1,7 +1,7 @@
-## v2.0.1 — downed-victim menu merged, ground-window interact fix, QTE-fallback fix
+## v2.0.1 — downed-victim menu merged, ground-window interact fix, downed-limbo fix, QTE-fallback fix
 
-A small follow-up to v2.0.0: one real bug fix and one menu simplification, both found and fixed
-from live-testing reports.
+A small follow-up to v2.0.0: real bug fixes and one menu simplification, all found and fixed from
+live-testing reports.
 
 ## Fixed: interact power refusing a downed victim forever ("NPC is busy")
 
@@ -28,6 +28,23 @@ tab shown first** (Choke Down, Investigate, Inspect, Stand Back, Help Up, Execut
 unchanged), followed by the same Affection / Forced / Sexual tabs used for a standing target. From
 any downed actor, any action is now reachable in one place. Nothing changes for a target that isn't
 downed — same menu as always.
+
+## Fixed: a non-downing action on an already-downed victim left them in "limbo"
+
+Reachable more easily now that the menus are merged (see above), but not caused by it: run a
+non-downing action (Kiss, Spank, etc.) on a victim who was already downed by something else
+(WombHit, Drug Food, a won struggle...) and the shared paired-animation cleanup — which runs at the
+end of *every* action and unconditionally strips restraint/pacify/ghost/pose, correct for two
+standing actors — had no idea the victim was already downed for an unrelated reason, and nothing
+ever restored those protections afterward. The victim was left reading as "downed" (still on the
+ground per the game state) while actually free to walk around, unpacified, unrestrained — a dead
+end nothing could recover from.
+
+Fix: that same shared cleanup function now re-applies an actor's downed protections (restrained/
+pacified/AI-held for an NPC, controls-disabled for the player, essential-flag ghost, stored down-
+pose resent) whenever they're still downed for a reason unrelated to the action that just ran —
+unless that action *is* itself a fresh defeat, in which case the existing down-setup handles it
+properly a moment later, untouched. Fixes it for every paired action, not just Kiss.
 
 ## Fixed: grope-type holds without the QTE addon always read as "resisted"
 

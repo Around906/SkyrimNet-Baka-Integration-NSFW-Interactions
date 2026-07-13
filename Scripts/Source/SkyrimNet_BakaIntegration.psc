@@ -2604,11 +2604,28 @@ Function _CleanupPair(Actor akA1, Actor akA2, \
     ; special-cased reset call. _IsDownedAny, not a bare OnGround check -- an Acheron-held victim has
     ; SNAcheron.Held=1 with OnGround=0, and the OnGround-only version of this check silently skipped
     ; exactly the actors the reset exists for.
+    ;
+    ; LIMBO FIX (confirmed live bug): everything above this point -- ghost, pacify, restrain, AI-hold,
+    ; player-control-enable, pose reset to IdleForceDefaultState -- runs UNCONDITIONALLY for whichever
+    ; side ISN'T covered by bSkipA2Reset, even when that actor was already downed independent of THIS
+    ; action's own outcome (e.g. WombHit downs a victim, then Kiss is run on the same still-downed
+    ; victim -- Kiss never sets bSkipA2Reset, so cleanup strips every downed protection and nothing
+    ; ever re-applies them). Left alone, the victim reads as downed (OnGround/Held still 1) yet is
+    ; fully free to move -- a dead-end state nothing can recover from. !bSkipA2Reset here means "the
+    ; caller is NOT about to run its own fresh-defeat setup right after this returns" (that path,
+    ; _DefeatGroundWindow, already reapplies everything itself a few lines later) -- so only re-glue
+    ; protections back on for a still-downed actor when nothing else is about to do it.
     If _IsDownedAny(akA1)
         StorageUtil.SetFloatValue(akA1, "SNBaka.AutoGetUpDeadlineRT", Utility.GetCurrentRealTime() + StorageUtil.GetFloatValue(PlayerRef, "SNAcheron.AutoGetUpSeconds", 600.0))
+        If !bSkipA2Reset
+            _ReassertDownedProtection(akA1)
+        EndIf
     EndIf
     If _IsDownedAny(akA2)
         StorageUtil.SetFloatValue(akA2, "SNBaka.AutoGetUpDeadlineRT", Utility.GetCurrentRealTime() + StorageUtil.GetFloatValue(PlayerRef, "SNAcheron.AutoGetUpSeconds", 600.0))
+        If !bSkipA2Reset
+            _ReassertDownedProtection(akA2)
+        EndIf
     EndIf
 
     If marker1
@@ -2616,6 +2633,26 @@ Function _CleanupPair(Actor akA1, Actor akA2, \
     EndIf
     If marker2
         marker2.Delete()
+    EndIf
+EndFunction
+
+; Re-glues an already-downed actor's protections back on after _CleanupPair stripped them for a
+; paired action that wasn't itself a fresh defeat (see the LIMBO FIX comment above). Same setup
+; _DefeatGroundWindow uses for a brand-new down, just without restarting its window/timer/narration
+; -- the ground window this actor is already in keeps running untouched.
+Function _ReassertDownedProtection(Actor ak)
+    If ak == PlayerRef
+        Game.DisablePlayerControls(True, True, False, False, True, False, False, False)
+    Else
+        ak.SetRestrained(True)
+        ak.SetDontMove(True)
+        _PacifyActor(ak, True)
+        _HoldActorAI(ak, True)
+    EndIf
+    _ForceEssentialForDown(ak, True)
+    String dp = StorageUtil.GetStringValue(ak, "SNBaka.DownPose", "")
+    If dp != ""
+        Debug.SendAnimationEvent(ak, dp)
     EndIf
 EndFunction
 
