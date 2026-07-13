@@ -32,10 +32,27 @@ Event OnEffectStart(Actor akTarget, Actor akCaster)
     ; flag only covers our own). Opening menus or firing an escalation on them yanks a running
     ; interaction apart. (The CASTER's own in-scene case was already handled above — that's the
     ; sex-spank menu, which exists precisely FOR scenes.)
-    If realTarget && (BakaMain.IsActorLocked(realTarget) || BakaMain.IsInSexAnimation(realTarget))
+    ;
+    ; EXCEPTION: a defeated victim stays SNBaka.Locked=1 for the entire ground window (Struggle/
+    ; ChokeHug's own aftermath — _DefeatGroundWindow deliberately keeps them locked so a third party
+    ; can't grab them mid-decision) while it waits for the SAME aggressor to pick Escalate/HelpUp/
+    ; Release/etc. via exactly this power -> Interact_ShowMenu -> the downed menu. Without this carve-
+    ; out the power refused every follow-up press for the window's whole duration, which read as the
+    ; NPC being permanently "busy" (confirmed bug report: standalone play, no AEL Struggle QTE addon
+    ; and no Acheron Integration, where nothing else ever clears the lock for you). Same ownership
+    ; check LockBoth already uses for its own ground-window carve-out — a third party still gets
+    ; refused, only the aggressor who actually owns this window gets through.
+    If realTarget && BakaMain.IsInSexAnimation(realTarget)
         If dbg
-            Debug.Notification("[Baka] power: " + realTarget.GetDisplayName() + " is busy (struggle/scene) — not interrupting")
-            Debug.Trace("[SNBaka][POWER] blocked — target " + realTarget.GetDisplayName() + " is locked/mid-scene")
+            Debug.Notification("[Baka] power: " + realTarget.GetDisplayName() + " is busy (scene) — not interrupting")
+            Debug.Trace("[SNBaka][POWER] blocked — target " + realTarget.GetDisplayName() + " is mid-scene")
+        EndIf
+        Return
+    EndIf
+    If realTarget && BakaMain.IsActorLocked(realTarget) && !BakaMain._IsGroundWindowOwner(akCaster, realTarget)
+        If dbg
+            Debug.Notification("[Baka] power: " + realTarget.GetDisplayName() + " is busy (struggle) — not interrupting")
+            Debug.Trace("[SNBaka][POWER] blocked — target " + realTarget.GetDisplayName() + " is locked by someone else")
         EndIf
         Return
     EndIf

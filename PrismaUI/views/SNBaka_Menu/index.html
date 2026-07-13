@@ -402,12 +402,12 @@
 //  ACTION TABLE
 //  id maps directly to Papyrus _DispatchInteractAction(choice)
 // ════════════════════════════════════════════════════════════
-const CATEGORIES = [
+const BASE_CATEGORIES = [
   { id: 'affectionate', label: 'Affection' },
   { id: 'forced',       label: 'Forced'       },
   { id: 'sexual',       label: 'Sexual'       },
 ];
-const ACTIONS = {
+const BASE_ACTIONS = {
   affectionate: [
     { id: 0,  label: 'Back Hug'      },
     { id: 1,  label: 'Front Hug'     },
@@ -440,6 +440,27 @@ const ACTIONS = {
     { id: 23, label: 'Inspect'       },
   ],
 };
+
+// Downed-victim-only actions (Escalate/HelpUp/Execute/Tie/etc). IDs stay 0-7, UNCHANGED wire
+// contract with Papyrus _DispatchDownedAction's own top-level 0-7 handling. When this list is
+// merged alongside the regular paired-animation tabs (see snbaka_open_downed below), those other
+// tabs get +100 added to their ids so a single numeric choice can never collide between the two
+// ranges — Papyrus routes anything >= 100 straight back into the normal interact dispatcher.
+const DOWNED_ACTIONS = [
+  { id: 0, label: 'Choke Down'  },
+  { id: 1, label: 'Investigate' },
+  { id: 2, label: 'Inspect'     },
+  { id: 3, label: 'Stand Back'  },
+  { id: 4, label: 'Help Up'     },
+  { id: 5, label: 'Execute'     },
+  { id: 6, label: 'Tie Up'      },
+  { id: 7, label: 'Untie'       },
+];
+
+// Mutable "current" tables the tab renderer reads — reset per-open by snbaka_open_interact /
+// snbaka_open_downed below, so _buildTabs()/_selectTab() need no mode-awareness of their own.
+let CATEGORIES = BASE_CATEGORIES;
+let ACTIONS    = BASE_ACTIONS;
 
 // ════════════════════════════════════════════════════════════
 //  SEX SPANK CHOICE ENCODING (sent to Papyrus as int string)
@@ -498,10 +519,13 @@ let g_encChoice = {};
 
 window.snbaka_open_interact = function(targetName) {
   g_mode = 'interact';
+  CATEGORIES = BASE_CATEGORIES;
+  ACTIONS    = BASE_ACTIONS;
   _el('header-label').textContent = 'Interact with';
   _el('header-target').textContent = targetName || '';
   _show('mode-interact');
   _hide('mode-sex');
+  _hide('mode-encounter');
   _hide('btn-back');
   _el('footer-hint').textContent = 'Esc · cancel';
   _buildTabs();
@@ -540,52 +564,32 @@ window.snbaka_open_encounter = function(json) {
   _open();
 };
 
-// targetName = victim display name.  Single-step list (reuses the encounter
-// container) of the four downed-victim choices.  Picks dispatch straight to
-// _DispatchDownedAction via _choose:  0 Escalate · 1 Investigate · 2 Inspect · 3 Stand Back · 4 Help Up.
+// targetName = victim display name. Merged menu: a "Down" tab (Escalate/HelpUp/Execute/Tie/etc,
+// shown first/active) PLUS every regular paired-animation tab, exactly like the not-downed
+// interact menu — a downed victim can have ANY action done to them, not just the downed-only set.
+// Reuses the same tabbed #mode-interact layout as snbaka_open_interact; only the CATEGORIES/
+// ACTIONS tables differ. Picks still dispatch through _choose -> _DispatchDownedAction: ids 0-7
+// are the Down tab (unchanged wire contract), ids >= 100 are a regular action + 100 (Papyrus
+// subtracts it back off and forwards to the normal interact dispatcher).
 window.snbaka_open_downed = function(targetName) {
   g_mode = 'downed';
+
+  const offsetActions = {};
+  BASE_CATEGORIES.forEach(cat => {
+    offsetActions[cat.id] = BASE_ACTIONS[cat.id].map(a => ({ id: a.id + 100, label: a.label, qte: a.qte }));
+  });
+  CATEGORIES = [{ id: 'down', label: 'Down' }, ...BASE_CATEGORIES];
+  ACTIONS    = Object.assign({ down: DOWNED_ACTIONS }, offsetActions);
+
   _el('header-label').textContent  = 'Downed';
   _el('header-target').textContent = targetName || '';
-  _hide('mode-interact');
+  _show('mode-interact');
   _hide('mode-sex');
-  _show('mode-encounter');
-
-  const prog = _el('enc-progress');
-  if (prog) prog.innerHTML = '';
-
-  const el = _el('enc-list');
-  el.innerHTML = '';
-  const lbl = document.createElement('div');
-  lbl.className = 'sex-label';
-  lbl.textContent = (targetName || 'The victim') + ' is down — what now?';
-  el.appendChild(lbl);
-
-  const grid = document.createElement('div');
-  grid.className = 'action-list';
-  const DOWNED = [
-    { t: 'Choke Down',  v: 0 },
-    { t: 'Investigate', v: 1 },
-    { t: 'Inspect',     v: 2 },
-    { t: 'Stand Back',  v: 3 },
-    { t: 'Help Up',     v: 4 },
-    { t: 'Execute',     v: 5 },
-    { t: 'Tie Up',      v: 6 },
-    { t: 'Untie',       v: 7 },
-  ];
-  grid.style.gridTemplateColumns = 'repeat(' + _gridCols(DOWNED.length) + ', 1fr)';
-  DOWNED.forEach(opt => {
-    const div = document.createElement('div');
-    div.className = 'action-item';
-    div.innerHTML = `<span>${opt.t}</span>`;
-    div.tabIndex = 0;
-    div.onclick = () => _choose(opt.v);
-    grid.appendChild(div);
-  });
-  el.appendChild(grid);
-
+  _hide('mode-encounter');
   _hide('btn-back');
   _el('footer-hint').textContent = 'Esc · stay down';
+  _buildTabs();
+  _selectTab('down');
   _open();
 };
 

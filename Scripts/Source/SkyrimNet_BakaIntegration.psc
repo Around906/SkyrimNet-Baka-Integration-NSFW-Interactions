@@ -1013,7 +1013,18 @@ Bool Function _PollResist(Actor akA1, Actor akA2, Float duration, \
     If !ael_ok
         _Log("[SNBaka] _PollResist: MakeGame failed — timed wait")
         UnregisterForModEvent("AEL_GameEnd")
-        Return _HoldAnim(akA1, akA2, sHoldA1, sHoldA2, duration)
+        ; No QTE addon installed: _HoldAnim just runs the timed hold. It returns True only if
+        ; something ABORTED it (death/combat break/distance/stop-request) -- that's neither a win
+        ; nor an escape, so leave _bQTEDefeated alone, same as an interrupted real QTE would. If it
+        ; ran the full duration uninterrupted, the attacker held them the whole time -- that's a
+        ; genuine defeat and _bQTEDefeated must say so, or every caller's "did the victim actually
+        ; get overpowered" check silently stays False forever without the addon installed (the
+        ; victim always reads as having resisted, regardless of what actually happened).
+        Bool timedAborted = _HoldAnim(akA1, akA2, sHoldA1, sHoldA2, duration)
+        If !timedAborted
+            _bQTEDefeated = True
+        EndIf
+        Return False   ; never "escaped" via this fallback -- no real QTE ran, so no win condition
     EndIf
 
     Float elapsed = 0.0
@@ -5667,6 +5678,17 @@ EndFunction
 Function _DispatchDownedAction(Int choice, Actor akCaster, Actor akVictim)
     _Log("[SNBaka] _DispatchDownedAction: choice=" + choice + " caster=" + akCaster + " victim=" + akVictim)
     If !akCaster || !akVictim
+        Return
+    EndIf
+    ; MERGED MENU: the downed-victim panel now also shows every regular paired-animation tab
+    ; alongside the Down-only actions (see PrismaUI's snbaka_open_downed) -- "from any downed actor
+    ; we can do any action." Those regular picks arrive offset by +100 so they can never collide
+    ; with the Down tab's own 0-7 ids; route them straight to the normal interact dispatcher and
+    ; skip all the ground-window bookkeeping below entirely (that's Down-tab-only territory). No
+    ; extra eligibility gate needed here -- LockBoth's own ground-window-owner carve-out already
+    ; lets this same aggressor act on their own downed/pinned victim.
+    If choice >= 100
+        _DispatchInteractActionWithActors(choice - 100, akCaster, akVictim)
         Return
     EndIf
     Bool ours = StorageUtil.GetIntValue(akVictim, "SNBaka.OnGround", 0) == 1
