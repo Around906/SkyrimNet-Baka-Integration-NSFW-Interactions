@@ -4562,12 +4562,23 @@ Function Investigate_Execute(Actor akInitiator, Actor akTarget)
     UnlockBoth(akInitiator, akTarget)
 EndFunction
 
+; SkyrimNet's PapyrusQuestAction dispatch validates parameterMapping count against the TARGET
+; function's own parameter count -- Papyrus default values (abFromHit below) don't exempt a trailing
+; parameter from that check the way a direct Papyrus-to-Papyrus call would. Confirmed live error:
+; "Parameter mapping count (2) doesn't match function parameter count (3) for action 'PinHelpless'"
+; -- both down_pin.yaml (PinHelpless) and struggle.yaml (Struggle) declare only 2 mapped parameters
+; against Struggle_Execute's 3, silently failing to dispatch for every LLM/NPC-initiated call. Two-
+; parameter wrapper gives both YAML actions an exact signature match instead.
+Function PinHelpless_Execute(Actor akInitiator, Actor akTarget)
+    Struggle_Execute(akInitiator, akTarget, False)
+EndFunction
+
 ; --- Struggle --- [bResistable]
 ; 5-stage grapple. Works on any gender combination.
 ; abFromHit: set ONLY by the on-hit mid-combat path (OnCreatureHitFollower's humanoid branch) --
 ; relaxes IsEligible's attacker-in-combat gate for exactly that call, since a struggle triggered BY a
-; combat hit is mid-combat by definition. LLM/YAML invocations (down_pin/struggle actions) call with
-; two args, so the default keeps their behavior unchanged.
+; combat hit is mid-combat by definition. YAML invocations go through PinHelpless_Execute above
+; instead (SkyrimNet's own dispatcher needs an exact parameter-count match, see that function).
 Function Struggle_Execute(Actor akInitiator, Actor akTarget, Bool abFromHit = False)
     _Log("[SNBakaACT] Struggle ENTER")
     If !IsEligible(akInitiator, akTarget, abFromHit)
@@ -7248,7 +7259,6 @@ Function _RegisterModEvents()
     RegisterForModEvent("SNBaka_CreatureHitFollower", "OnCreatureHitFollower")
     RegisterForModEvent("SNAcheron_RequestForceRecover", "OnAcheronForceRecoverRequest")
     RegisterForModEvent("SNBaka_DefeatedExecuted",       "OnDefeatedExecuted")
-    RegisterForModEvent("SNAcheron_HunterPrideChoice", "OnHunterPrideChoice")
     ; Mirrors SNAcheron.Present (set by the Acheron bridge) — lets Acheron's standalone install detect
     ; whether we're actually here to answer SNBaka_TryCreatureOnDowned before it bothers waiting on us.
     If PlayerRef
@@ -7299,35 +7309,12 @@ Event OnAcheronForceRecoverRequest(String eventName, String strArg, Float numArg
     StorageUtil.FormListClear(PlayerRef, "SNAcheron.ForceRecoverQueue")
 EndEvent
 
-; Acheron Integration registered our downed-victim actions into AcheronNG's own native "Hunter's Pride"
-; on-screen option menu (shown on plain E/activate against a defeated actor) — it can't call our Execute
-; functions directly (no hard script reference between the two mods, by design), so it stashes the
-; target and fires this event with the choice as a plain string instead, same "stash + mod event"
-; pattern as every other cross-mod hand-off here. Reuses _DispatchDownedAction's existing choice
-; dispatch verbatim (0=Escalate, 1=Investigate, 2=Inspect, 3=Stand Back, 4=Help Up) rather than
-; duplicating it — the player is always the caster here since this only ever fires from a native
-; vanilla-activate selection.
-Event OnHunterPrideChoice(String eventName, String strArg, Float numArg, Form sender)
-    Actor target = StorageUtil.GetFormValue(PlayerRef, "SNAcheron.HunterPrideTarget") as Actor
-    If !target
-        Return
-    EndIf
-    Int choice = -1
-    If strArg == "escalate"
-        choice = 0
-    ElseIf strArg == "investigate"
-        choice = 1
-    ElseIf strArg == "inspect"
-        choice = 2
-    ElseIf strArg == "standback"
-        choice = 3
-    ElseIf strArg == "helpup"
-        choice = 4
-    EndIf
-    If choice >= 0
-        _DispatchDownedAction(choice, PlayerRef, target)
-    EndIf
-EndEvent
+; REMOVED: the OnHunterPrideChoice listener for Acheron Integration's custom "Hunter's Pride" options
+; (Escalate/Investigate/Inspect/Stand Back/Help Up added to Acheron's own native E/activate menu) —
+; that registration was removed on the Acheron side after it was traced as the likely cause of
+; Acheron's own native activate-menu (Heal/Loot/Kill/Vampire Feed) going completely unresponsive once
+; this integration was installed. Fully redundant anyway: every one of those five actions, plus more
+; (Execute, Tie Up, Untie), is already reachable through Baka's own interact-power menu.
 
 Function _RegisterDecorators()
     SkyrimNetApi.RegisterDecorator("get_baka_state",              "SkyrimNet_BakaIntegration", "GetBakaState")

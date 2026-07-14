@@ -47,6 +47,21 @@ RE::BSEventNotifyControl HitEventSink::ProcessEvent(const RE::TESHitEvent* a_eve
         // swallowed upstream (Acheron's damage hook) and detection must move to an OnHit cloak.
         SKSE::log::info("HitEventSink: hit on DEFEATED '{}' (source={:X}, projectile={:X})",
                         target->GetDisplayFullName(), a_event->source, a_event->projectile);
+
+        // UNTRACKED-BLEEDOUT NET, event-driven instead of polled. An essential/civilian actor's
+        // vanilla bleedout is invisible to Acheron's own kill-hook (essentials never take the actual
+        // killing blow -- the engine diverts them to bleedout before that hook ever fires), and the
+        // Papyrus-side safety net for this (_ScanForUntrackedBleedout) is a 5-second poll: confirmed
+        // live, a fast bleedout-then-vanilla-self-recovery cycle on a civilian can complete entirely
+        // inside that polling gap, so the net samples "nothing to catch" after the fact even though a
+        // full down-and-up cycle already happened unseen. This hit sink already detects the bleedout
+        // life-state on every single hit, synchronously, with the SAME zero-lag guarantee the
+        // execution branch above relies on -- so forward it immediately instead of waiting for a poll
+        // tick to maybe notice before the actor's already back on their feet. Papyrus re-checks
+        // Acheron.IsDefeated/SNAcheron.Held itself before adopting, so a duplicate/late event here is
+        // a harmless no-op, not a double-claim.
+        SKSE::ModCallbackEvent bleedoutEv{"SNBaka_ActorBleedingOut"sv, ""sv, 0.0f, target};
+        SKSE::GetModCallbackEventSource()->SendEvent(&bleedoutEv);
         // NO cause requirement -- confirmed live: an arrow hit on a defeated target arrived with the
         // shooter unresolvable (cause null), which silently skipped the execution. The shooter's
         // identity doesn't matter for the kill; a dead cause is equally irrelevant.

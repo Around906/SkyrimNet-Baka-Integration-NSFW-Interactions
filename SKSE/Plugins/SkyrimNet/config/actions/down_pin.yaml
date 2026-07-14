@@ -3,7 +3,7 @@ description: |
   Pin and physically restrain a DOWNED victim — grab, hold, and manhandle a defeated target into submission while they lie helpless on the ground. Use to subdue or assert control over a beaten enemy. Valid while combat is still nominally live.
 questEditorId: SkyrimNet_BakaIntegration
 scriptName: SkyrimNet_BakaIntegration
-executionFunctionName: Struggle_Execute
+executionFunctionName: PinHelpless_Execute
 
 parameterMapping:
   - type: speaker

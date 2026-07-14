@@ -70,8 +70,10 @@ namespace {
             [](RE::Actor* a) { return PreSexContact(a); });
 
         RegisterOne("SNBaka_Display",
-            "Provocative, performative, social display with NO physical contact: flirt, tease, seduce, make eyes; "
-            "or show off, pose, strut, flaunt the body. Use when being suggestive rather than touching anyone.",
+            "Provocative, performative display FOR another character to see — flirt, tease, seduce, make eyes, "
+            "or show off your body for them. Always has a target watching or being addressed: a brief social "
+            "beat, NOT a held solo pose (use SNBaka_Pose for striking and holding a pose on your own). "
+            "No physical contact.",
             [](RE::Actor* a) { return NotInCombat(a); });
 
         RegisterOne("SNBaka_Scene",
@@ -82,6 +84,17 @@ namespace {
         RegisterOne("SNBaka_Expression",
             "Make the speaker's FACE show an emotion for a few seconds (facial expression only, no body action): "
             "happy, angry, afraid, sad, pained, surprised, or confused. Use to react emotionally to what was said or done.",
+            [](RE::Actor* a) { return NotInCombat(a); });
+
+        // Shared across mods: SkyrimNet_AnimationsGS's own GSPoser pose actions (Dance, Seduce,
+        // Stretch, etc.) join this same category by setting customCategory: SNBaka_Pose in their own
+        // YAML -- one registration, referenced by two mods, same "solo body pose/gesture" concept
+        // regardless of which animation backend actually plays it.
+        RegisterOne("SNBaka_Pose",
+            "Hold a SOLO body pose or gesture — no target, nobody needs to be watching, no physical contact "
+            "with anyone: kneel, meditate, sleep, crouch, stretch, dance, strike a suggestive idle stance, "
+            "and more. Held in place until you stop it, combat starts, or it times out on its own (unlike "
+            "SNBaka_Display, which is a brief beat performed FOR someone else).",
             [](RE::Actor* a) { return NotInCombat(a); });
     }
 }

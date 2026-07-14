@@ -1,0 +1,14 @@
+# Combat-PERMISSIVE category, same reasoning as cat_snbaka_downed.yaml: CreatureEscalate's own
+# description explicitly covers "mid-fight, the human is clearly LOSING" -- a category-level
+# NotInCombat lambda (the DLL-native default used for every other category) would hide this exact
+# action during the one moment its own docs call out as a valid use case. Defined in YAML instead so
+# it carries no category-level combat gate; CreatureEscalate's own eligibilityRules + Papyrus exec
+# (which no-ops unless a creature/vulnerable-human pairing is actually present) do the real gating.
+#
+# MUST STAY enabled: true -- same confirmed behavior as cat_snbaka_downed.yaml: enabled: false strips
+# every member action out of SkyrimNet's rendered "## Eligible Actions" menu entirely, regardless of
+# EligibilityChecker still reporting them individually eligible.
+customCategory: SNBaka_Creature
+name: Creature
+description: "Beast-on-human forced encounters: a creature (wolf, falmer, troll, draugr, etc.) sexually overpowers a vulnerable or downed human, or one that's clearly losing a fight. Valid even while still nominally in combat, since the victim being overwhelmed IS the trigger."
+enabled: true

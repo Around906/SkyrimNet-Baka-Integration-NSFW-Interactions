@@ -33,7 +33,7 @@ description: |
 
 questEditorId: SkyrimNet_BakaIntegration
 scriptName: SkyrimNet_BakaIntegration
-executionFunctionName: Struggle_Execute
+executionFunctionName: PinHelpless_Execute
 
 parameterMapping:
   - type: speaker
