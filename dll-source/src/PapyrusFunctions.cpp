@@ -97,6 +97,11 @@ static void SNBakaUI_ShowDownedMenu(RE::StaticFunctionTag*,
     PrismaUIBridge::ShowDownedMenu(akCaster, akVictim);
 }
 
+static void SNBakaUI_ShowMidCombatMenu(RE::StaticFunctionTag*,
+                                    RE::Actor* akCaster, RE::Actor* akTarget) {
+    PrismaUIBridge::ShowMidCombatMenu(akCaster, akTarget);
+}
+
 static float SNBakaUI_GetOffset(RE::StaticFunctionTag*,
                                 RE::BSFixedString asKey, RE::BSFixedString asAxis, float afDefault) {
     if (!g_offsetsLoaded) LoadOffsets();
@@ -127,6 +132,7 @@ bool PapyrusFunctions::Register(RE::BSScript::IVirtualMachine* vm) {
     vm->RegisterFunction("IsCraftingTemptation", kScriptName, SNBakaUI_IsCraftingTemptation);
     vm->RegisterFunction("ShowEncounterMenu",   kScriptName, SNBakaUI_ShowEncounterMenu);
     vm->RegisterFunction("ShowDownedMenu",      kScriptName, SNBakaUI_ShowDownedMenu);
+    vm->RegisterFunction("ShowMidCombatMenu",   kScriptName, SNBakaUI_ShowMidCombatMenu);
     vm->RegisterFunction("GetOffset",           kScriptName, SNBakaUI_GetOffset);
     vm->RegisterFunction("ReloadOffsets",       kScriptName, SNBakaUI_ReloadOffsets);
     vm->RegisterFunction("GetLastHitAggressor", kScriptName, SNBakaUI_GetLastHitAggressor);

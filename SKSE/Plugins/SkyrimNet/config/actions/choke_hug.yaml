@@ -10,7 +10,7 @@ description: |
 
 questEditorId: SkyrimNet_BakaIntegration
 scriptName: SkyrimNet_BakaIntegration
-executionFunctionName: ChokeHug_Execute
+executionFunctionName: ChokeHelpless_Execute
 
 parameterMapping:
   - type: speaker

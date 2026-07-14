@@ -268,6 +268,18 @@ Bool _bCooldownActive       = False
 ; Set by Play* helpers when a QTE completes with the attacker winning (victim dominated).
 ; Cleared by LockBoth at the start of every new animation.
 Bool _bQTEDefeated          = False
+; In-combat "grapple takedown" (interact power, aggressive-menu path): True for the duration of a
+; paired animation the PLAYER started against a target they're still actively fighting. Consumed by
+; _SetupPair (skip ghosting the player) and _ShouldAbort (abort if the player takes a fresh hit).
+; Set right after LockBoth succeeds in the relevant *_Execute function; always reset in _CleanupPair,
+; the single guaranteed choke point every paired interaction ends at.
+Bool  _bMidCombatGrappleActive = False
+Float _fMidCombatHitBaselineRT = 0.0
+; Timestamp of the last time the PLAYER took a physical hit, stamped unconditionally (before any MCM
+; gate) at the top of OnCreatureHitFollower -- the existing native hit pipeline already fires that
+; event synchronously on every such hit, so this needed no new native plumbing. Compared against
+; _fMidCombatHitBaselineRT by _ShouldAbort to detect "a NEW hit landed since this grapple started".
+Float _fLastPlayerHitRT        = 0.0
 ; Optional Babo down-pose anim event for the NEXT NPC defeat (e.g. "BaboFaintF" after a choke).
 ; Read + cleared by _Bleedout. Empty => default Babo_DefeatTraumaLie.
 String _sDownPose           = ""
@@ -988,8 +1000,17 @@ Bool Function _PollResist(Actor akA1, Actor akA2, Float duration, \
 
     ; Let the animation play for fQTEStartDelay seconds before the QTE overlay appears.
     ; Subtract from duration so total animation time stays constant.
-    If fQTEStartDelay > 0.0
-        Float delay = fQTEStartDelay
+    ; In-combat grapple takedown: fQTEStartDelay exists to give AEL Struggle's OWN overlay time to
+    ; open cleanly after the PrismaUI menu closes -- dead weight for the (confirmed live: far more
+    ; common) case where AEL isn't installed at all, and directly at odds with "a decisive mid-fight
+    ; takedown" reading as fast. Use a much shorter fixed delay for this specific transient mode
+    ; instead of the tunable global default, which stays untouched for every other action.
+    Float qteStartDelay = fQTEStartDelay
+    If _bMidCombatGrappleActive
+        qteStartDelay = 0.3
+    EndIf
+    If qteStartDelay > 0.0
+        Float delay = qteStartDelay
         If delay >= duration - 1.0
             delay = duration - 1.0  ; always leave at least 1s for the QTE
         EndIf
@@ -1027,12 +1048,13 @@ Bool Function _PollResist(Actor akA1, Actor akA2, Float duration, \
         Return False   ; never "escaped" via this fallback -- no real QTE ran, so no win condition
     EndIf
 
-    Float elapsed = 0.0
-    Float tick    = 0.1
-    Float sinceRe = 0.0
-    While elapsed < duration && !_bAELStruggleComplete && !_ShouldAbort(akA1, akA2)
+    ; Real-clock elapsed, not a naive tick counter -- see _WaitOrAbort's comment. Confirmed live: this
+    ; exact loop logged window=2.2s but ran 9 real seconds under concurrent VM load.
+    Float startRT  = Utility.GetCurrentRealTime()
+    Float tick     = 0.1
+    Float sinceRe  = 0.0
+    While (Utility.GetCurrentRealTime() - startRT) < duration && !_bAELStruggleComplete && !_ShouldAbort(akA1, akA2)
         Utility.Wait(tick)
-        elapsed += tick
         sinceRe += tick
         ; Re-assert the held pose ~every 2s so the actors don't drift off-anim during the QTE.
         If sinceRe >= 2.0
@@ -1117,16 +1139,32 @@ Bool Function _ShouldAbort(Actor akA1, Actor akA2)
         _Log("[SNBaka] _ShouldAbort: actors too far apart — breaking scene")
         Return True
     EndIf
+    ; In-combat grapple takedown: the player is deliberately NOT ghosted for this mode (see
+    ; _SetupPair), so a third party's hit actually lands -- abort the instant it does. Can't reuse
+    ; the akA1.GetCombatTarget() check above for this: the player doesn't run AI combat packages the
+    ; way an NPC does, so GetCombatTarget() isn't a reliable "who's fighting the player" signal
+    ; (confirmed elsewhere in this file, see OnCreatureHitFollower's own aggressor-resolution
+    ; comments) -- the native hit-event timestamp is the real signal here.
+    If _bMidCombatGrappleActive && _fLastPlayerHitRT > _fMidCombatHitBaselineRT
+        _Log("[SNBaka] _ShouldAbort: player was hit mid-grapple — breaking scene")
+        Return True
+    EndIf
     Return _StopRequested(akA1, akA2)
 EndFunction
 
 ; Waits duration seconds in tick-sized steps.
 ; Returns True if aborted early due to combat or death.
+; Measures against the REAL clock, not a naive tick counter -- confirmed live (Subdue QTE log,
+; window=2.2s actually ran 9 real seconds): under heavy concurrent Papyrus VM load (this modlist's
+; SkyrimNet eligibility-check spam alone logged dozens of calls during one QTE), a single
+; Utility.Wait(tick) routinely takes several times longer than its nominal tick value in real time.
+; Counting "elapsed += tick" assumes each Wait call actually took `tick` seconds, so every caller's
+; requested duration silently balloons under load. GetCurrentRealTime() makes the loop exit at the
+; REAL time the caller asked for regardless of how throttled each individual Wait call was.
 Bool Function _WaitOrAbort(Actor akA1, Actor akA2, Float duration, Float tick = 0.5)
-    Float elapsed = 0.0
-    While elapsed < duration
+    Float startRT = Utility.GetCurrentRealTime()
+    While (Utility.GetCurrentRealTime() - startRT) < duration
         Utility.Wait(tick)
-        elapsed += tick
         If _ShouldAbort(akA1, akA2)
             Return True
         EndIf
@@ -1564,13 +1602,15 @@ Function _RecoveryPeriod(Actor akVictim, Actor akWitness, Float duration)
     ; loser stays helpless on the ground for the full window even if a fight breaks out
     ; around them (unlike the paired anim, which combat breaks).  So: plain timed wait,
     ; no combat early-exit.
-    Float recElapsed = 0.0
+    ; Real-clock elapsed, not a naive tick counter -- see _WaitOrAbort's comment. Without this, a
+    ; "10 second" recovery hold (this is the path a player-as-victim struggle falls into when there's
+    ; no real QTE contest to resolve it) could balloon under VM load the same way the QTE loops did.
+    Float recStartRT = Utility.GetCurrentRealTime()
     Float recTick    = 0.5
     Float recDur     = duration - 0.5
     Float recHold    = 0.0
-    While recElapsed < recDur
+    While (Utility.GetCurrentRealTime() - recStartRT) < recDur
         Utility.Wait(recTick)
-        recElapsed += recTick
         recHold += recTick
         If recHold >= 3.0
             recHold = 0.0
@@ -2139,6 +2179,24 @@ Function PlayPairedSimpleAnim(Actor akA1, Actor akA2, \
             _PlaySpankMoanOnly(akA2)
             _HoldAnim(akA1, akA2, animA1, animA2, duration - half)
         EndIf
+    ElseIf bResistable
+        ; The resistable branch above is skipped whenever bResistEnabled is off (or neither actor is
+        ; the player) -- confirmed live gap: Subdue used this path with bResistEnabled off and just
+        ; held the pose, leaving _bQTEDefeated/_bAELVictimEscaped BOTH False forever, so no caller's
+        ; win/lose check ever fired either way. PlayPairedSequence's own no-QTE fallback already
+        ; resolves a winner via fNPCEscapeChance instead of leaving it ambiguous -- mirror that here.
+        If !_HoldAnim(akA1, akA2, animA1, animA2, duration)
+            If Utility.RandomFloat(0.0, 99.9) < fNPCEscapeChance
+                Debug.SendAnimationEvent(akA1, "Babo_DefeatResist_A1_S2")
+                Debug.SendAnimationEvent(akA2, "Babo_DefeatResist_A2_S2")
+                SkyrimNetApi.RegisterEvent("baka_resist_success", \
+                    akA2.GetDisplayName() + " breaks free from " + akA1.GetDisplayName() + ".", \
+                    akA1, akA2)
+                _OnVictimWon(akA2, akA1)
+            Else
+                _bQTEDefeated = True
+            EndIf
+        EndIf
     Else
         ; Freeze both actors on the pose for the whole duration (re-asserted each tick).
         _HoldAnim(akA1, akA2, animA1, animA2, duration)
@@ -2233,6 +2291,17 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
     ; post-escape grace at the bottom of this function keys off it.
     _bAELVictimEscaped = False
 
+    ; In-combat grapple takedown: fSequenceStageTimer (4.0s default) times how long EACH of a
+    ; multi-stage sequence's stages holds -- fine pacing for a leisurely non-combat struggle, but a
+    ; 5-stage sequence at the default pays up to 20s of sequential holds with no way for the fallback
+    ; (no-AEL-addon) path to resolve any faster, confirmed live as "takes far too long" for a mode
+    ; whose whole point is a fast, decisive mid-fight takedown. Every stageTimer use below reads this
+    ; local instead of the raw parameter; untouched for every other (non-mid-combat) caller.
+    Float effStageTimer = stageTimer
+    If _bMidCombatGrappleActive
+        effStageTimer = 1.0
+    EndIf
+
     ObjectReference marker1 = None
     ObjectReference marker2 = None
     If XMarkerBase
@@ -2262,9 +2331,14 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
         ; fQTEStartDelay: lets stage 0 settle visually and — critically — gives Skyrim's
         ; UI time to finish closing the Interact message box. SPE_Interface.OpenCustomMenu
         ; (used inside MakeGame) returns False if called while the UI is still transitioning
-        ; after Message.Show(), which is why Struggle/ChokeHug showed no QTE overlay.
-        If fQTEStartDelay > 0.0
-            aborted = _WaitOrAbort(akA1, akA2, fQTEStartDelay)
+        ; after Message.Show(), which is why Struggle/ChokeHug showed no QTE overlay. Same
+        ; mid-combat-grapple override as _PollResist -- see that function's own comment.
+        Float effQTEStartDelay = fQTEStartDelay
+        If _bMidCombatGrappleActive
+            effQTEStartDelay = 0.3
+        EndIf
+        If effQTEStartDelay > 0.0
+            aborted = _WaitOrAbort(akA1, akA2, effQTEStartDelay)
         EndIf
 
         Bool ael_ok = False
@@ -2275,11 +2349,10 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
         EndIf
 
         If ael_ok
-            Float elapsed = 0.0
             Float stageElapsed = 0.0
             Float sinceRe = 0.0
             Float tick = 0.1
-            Float maxWait = stageTimer * animsA1.Length + 10.0
+            Float maxWait = effStageTimer * animsA1.Length + 10.0
             Int stageIdx = 0
             ; Hold stage 0 for the ENTIRE QTE — no longer advances stages on stageTimer while the
             ; struggle is still undecided. That used to let the visible pose drift completely out of
@@ -2287,9 +2360,12 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
             ; than what the minigame had actually resolved). Stages now only ever advance AFTER the QTE
             ; completes, branching into the win/lose resolution below — the same pattern the timed
             ; (non-QTE) fallback further down already uses for NPC-vs-NPC.
-            While !_bAELStruggleComplete && !aborted && elapsed < maxWait
+            ; Real-clock elapsed, not a naive tick counter -- see _WaitOrAbort's comment (confirmed
+            ; live: an identical loop in _PollResist logged a 2.2s window that actually ran 9s under
+            ; concurrent VM load).
+            Float startRT = Utility.GetCurrentRealTime()
+            While !_bAELStruggleComplete && !aborted && (Utility.GetCurrentRealTime() - startRT) < maxWait
                 Utility.Wait(tick)
-                elapsed      += tick
                 stageElapsed += tick
                 sinceRe      += tick
                 If _ShouldAbort(akA1, akA2)
@@ -2312,7 +2388,7 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
             If _bAELStruggleComplete && !escaped
                 _bQTEDefeated = True
                 ; Finish remaining time in the current stage first.
-                Float stageRemain = stageTimer - stageElapsed
+                Float stageRemain = effStageTimer - stageElapsed
                 If stageRemain > 0.05 && !_ShouldAbort(akA1, akA2)
                     _WaitOrAbort(akA1, akA2, stageRemain)
                 EndIf
@@ -2322,7 +2398,7 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
                     stageIdx = starIdx
                     Debug.SendAnimationEvent(akA1, animsA1[stageIdx])
                     Debug.SendAnimationEvent(akA2, animsA2[stageIdx])
-                    _WaitOrAbort(akA1, akA2, stageTimer)
+                    _WaitOrAbort(akA1, akA2, effStageTimer)
                 EndIf
             EndIf
         Else
@@ -2339,7 +2415,7 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
             While fi < stagesPlay && !aborted
                 Debug.SendAnimationEvent(akA1, animsA1[fi])
                 Debug.SendAnimationEvent(akA2, animsA2[fi])
-                If _WaitOrAbort(akA1, akA2, stageTimer)
+                If _WaitOrAbort(akA1, akA2, effStageTimer)
                     aborted = True
                 EndIf
                 fi += 1
@@ -2390,7 +2466,7 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
                     _HoldPinned(akA1)
                 EndIf
                 ; Freeze the actors on this stage for its whole duration (re-asserted each tick).
-                _HoldAnim(akA1, akA2, animsA1[i], animsA2[i], stageTimer)
+                _HoldAnim(akA1, akA2, animsA1[i], animsA2[i], effStageTimer)
                 i += 1
             EndWhile
         Else
@@ -2530,6 +2606,9 @@ EndFunction
 Function _CleanupPair(Actor akA1, Actor akA2, \
         ObjectReference marker1, ObjectReference marker2, Bool hadPlayer, Bool bSkipA2Reset = False)
     _Log("[SNBaka] CleanupPair: A1=" + akA1.GetDisplayName() + " A2=" + akA2.GetDisplayName() + " hadPlayer=" + hadPlayer)
+    ; Single guaranteed choke point every paired interaction ends at -- reset the in-combat grapple
+    ; mode flag here unconditionally, regardless of which exit path got us here (win/lose/abort).
+    _bMidCombatGrappleActive = False
     akA1.SetVehicle(None)
     akA2.SetVehicle(None)
     ; Reset the pose FIRST, while STILL ghosted/restrained/pacified/AI-held -- confirmed real bug from
@@ -2819,12 +2898,17 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
     Float sinceCue  = 0.0
     Bool escalated = False
     Bool sceneTookOver = False
-    ; No time-based hard cap here on purpose — recovery is strictly the 3 conditions (HelpUp, nobody
-    ; around, win the QTE), full stop. A cap that fires on raw elapsed time regardless of presence would
-    ; stand the victim up even while the aggressor is still right there mid-decision, silently bypassing
-    ; the rule. HelpUp/Release/QTE-win are always available regardless of proximity, so there's no
-    ; realistic "stuck forever" case this was actually needed for.
-    While elapsed < fEscalationWindow && !escalated && !sceneTookOver && !_bReleaseRequested && !_bStandBack
+    Bool agedOut = False
+    ; Presence-based hold below resets `elapsed` while anyone's nearby, so an untied victim in this
+    ; Acheron-absent fallback (this whole block only runs when Acheron didn't pick them up — see the
+    ; delegate-and-return above) could stay down indefinitely in practice: the player who just defeated
+    ; them is almost always within 700 units of their own victim. Confirmed live report: "downed actors
+    ; cannot move or get up again" with Acheron not installed. startDownRT + fEscalationWindow is a hard
+    ; ceiling on top of the presence-reset countdown -- still real-clock (not a naive tick count, same
+    ; reasoning as _WaitOrAbort) so it isn't itself inflated by VM load. Tied victims are excluded:
+    ; TieUp_Execute is its own explicit, opt-in "keep them down" mechanic with its own duration.
+    Float startDownRT = Utility.GetCurrentRealTime()
+    While elapsed < fEscalationWindow && !escalated && !sceneTookOver && !_bReleaseRequested && !_bStandBack && !agedOut
         Utility.Wait(tick)
         elapsed += tick
         sinceHold += tick
@@ -2840,6 +2924,11 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
         ; HelpUp. This is what stops an attacker "backing up" and the victim popping up mid-sequence.
         If _AnyActorNear(akA2, 700.0)
             elapsed = 0.0
+        EndIf
+        If !sceneTookOver && StorageUtil.GetIntValue(akA2, "SNBaka.Tied", 0) != 1 \
+                && (Utility.GetCurrentRealTime() - startDownRT) >= fEscalationWindow
+            agedOut = True
+            _Log("[SNBaka] _DefeatGroundWindow: aged out after " + fEscalationWindow + "s (Acheron absent, not tied) — recovering regardless of nearby presence")
         EndIf
         If _bResetDownWindow
             ; An aggressor just interacted with the downed victim (LLM inspect/etc.) — keep them down
@@ -3811,8 +3900,25 @@ Function _SetupPair(Actor akAtk, Actor akVic, Float xLocal, Float yLocal, Float 
         ; so they won't fall" concern predates SetNoCollision being applied unconditionally above --
         ; ghost only gates combat hit processing, not world collision, so there's nothing to fall
         ; through.) _CleanupPair already un-ghosts both actors unconditionally on every exit path.
-        akAtk.SetGhost(True)
+        ;
+        ; EXCEPTION: the in-combat grapple takedown deliberately leaves the player vulnerable -- the
+        ; whole point is a real risk/reward mid-fight, not another safe struggle. The TARGET still
+        ; always gets ghosted (they're the one being grappled into submission); only the player's own
+        ; ghost is skipped, and only for this specific mode.
+        If !(_bMidCombatGrappleActive && atkPlayer)
+            akAtk.SetGhost(True)
+        EndIf
         akVic.SetGhost(True)
+    EndIf
+    ; Re-stamp the mid-combat hit baseline HERE, not just once back in Subdue/ChokeHug_Execute's own
+    ; entry. The caller's stamp happens right after LockBoth, before the target is actually ghosted --
+    ; LockBoth's own _CalmForAnim wait plus this function's setup take roughly a real second combined,
+    ; during which the target (not yet ghosted) can still land one last swing. That swing then tripped
+    ; _ShouldAbort's hit-check the instant the QTE poll started, so the grapple "broke" almost the
+    ; moment it began, essentially every time. The target is genuinely locked down as of this line, so
+    ; only a hit landing from THIS point on (a real mid-grapple interruption) should count.
+    If _bMidCombatGrappleActive && atkPlayer
+        _fMidCombatHitBaselineRT = _fLastPlayerHitRT
     EndIf
     If !atkPlayer
         akAtk.SetRestrained(True)
@@ -4573,6 +4679,94 @@ Function PinHelpless_Execute(Actor akInitiator, Actor akTarget)
     Struggle_Execute(akInitiator, akTarget, False)
 EndFunction
 
+; --- Subdue --- [bResistable] -- in-combat grapple takedown menu only, not LLM/YAML-facing.
+; Same "Babo_DefeatResist_A1_S1"/"A2_S1" crouching-straddler/pinned-down pose _DoEscalation already
+; uses to force a DOWNED victim onto the ground before a scene -- reused here as the takedown itself,
+; made resistable (the target isn't already beaten in this context, so they get a real chance to
+; fight it off). One static hold via PlayPairedSimpleAnim, not a 5-stage sequence -- both faster on
+; its own merits and immune to PlayPairedSequence's per-stage pacing entirely.
+Function Subdue_Execute(Actor akInitiator, Actor akTarget, Bool abFromHit = False)
+    _Log("[SNBakaACT] Subdue ENTER")
+    If !IsEligible(akInitiator, akTarget, abFromHit)
+        Return
+    EndIf
+    If !LockBoth(akInitiator, akTarget)
+        Return
+    EndIf
+    ; Cache locally: _CleanupPair (run inside PlayPairedSimpleAnim, below) already clears
+    ; _bMidCombatGrappleActive before control returns here, so the module var can't be trusted
+    ; for the post-anim outcome branch — only this local snapshot can.
+    Bool wasMidCombat = False
+    If abFromHit && akInitiator == PlayerRef
+        _bMidCombatGrappleActive = True
+        _fMidCombatHitBaselineRT = _fLastPlayerHitRT
+        wasMidCombat = True
+    EndIf
+    RecordAnimation(akInitiator, "Subdue", akTarget.GetDisplayName())
+    RecordAnimation(akTarget,    "Subdue", akInitiator.GetDisplayName())
+    _CueOngoing("baka_forced", \
+        akInitiator.GetDisplayName() + " forces " + akTarget.GetDisplayName() + " to the ground, pinning them down; " + akTarget.GetDisplayName() + " fights to break free.", \
+        akInitiator, akTarget)
+    _StartTears(akTarget)
+    If bExpressionsEnabled
+        _ApplyMoodExpression(akTarget, "afraid")
+    EndIf
+
+    ; A decisive mid-fight takedown reads as fast, not a leisurely molest hold — fMolestLoopDuration
+    ; (8s, tuned for the non-combat context) stays untouched for every other caller. 2.5 (2.2s of
+    ; actual AEL window after the 0.3s pre-QTE delay) was cut too far: confirmed live, the AEL Flash
+    ; QTE never once completed in that window -- every attempt timed out before the overlay could
+    ; register a result (compare Choke Behind's PlayPairedSequence maxWait, ~15s, never touched).
+    ; 5.0 (4.7s of real QTE window) still lands far under the original 8s while giving AEL room to
+    ; actually resolve a genuine win or loss instead of always timing out to "escaped".
+    Float subdueDuration = fMolestLoopDuration
+    If wasMidCombat
+        subdueDuration = 5.0
+    EndIf
+
+    ; rotOffset=0 (not 180): per _SetupPair's own convention ("0 = same dir as A2, 180 = facing A2"),
+    ; this is a from-behind/on-top takedown pose, not a face-to-face one. The 180 default previously
+    ; here was copied blind from _DoEscalation's OWN inline positioning math, which anchors off the
+    ; VICTIM (already downed, stationary) — a different coordinate convention than _SetupPair's
+    ; attacker-anchored one used here. Confirmed wrong live (victim faced 180 off).
+    PlayPairedSimpleAnim(akInitiator, akTarget, \
+        0.0, 0.0, 0.0, \
+        "Babo_DefeatResist_A2_S1", "Babo_DefeatResist_A1_S1", \
+        subdueDuration, True)
+
+    If _bQTEDefeated
+        _Log("[SNBaka] Subdue: QTE defeated — calling DefeatGroundWindow. attacker=" + akInitiator.GetDisplayName() + " victim=" + akTarget.GetDisplayName())
+        _bQTEDefeated = False
+        _UnlockAttackerOnly(akInitiator)
+        _DefeatGroundWindow(akInitiator, akTarget)
+    Else
+        If wasMidCombat
+            ; The target broke free of a live grapple attempt — not a "loser recovering from a struggle"
+            ; (_RecoveryPeriod would shove them into ANOTHER ~10s restrained/bleedout hold, reading as
+            ; "calm"/helpless). Dispel the Calm LockBoth/_SetupPair applied and force them straight back
+            ; into combat — a hostile target that resisted should still be fighting, not standing dazed.
+            _Log("[SNBaka] Subdue outcome: mid-combat grapple broken — releasing " + akTarget.GetDisplayName() + " back to combat (not a defeat)")
+            If SNBakaCalm
+                akTarget.DispelSpell(SNBakaCalm)
+            EndIf
+            akTarget.StartCombat(akInitiator)
+        ElseIf !_bAELVictimEscaped
+            _Log("[SNBaka] Subdue outcome: attacker won the exchange (not a fresh QTE-defeat) — _RecoveryPeriod on " + akTarget)
+            _RecoveryPeriod(akTarget, akInitiator, 10.0)
+        ElseIf _IsDownedAny(akTarget)
+            _Log("[SNBaka] Subdue outcome: victim escaped AND was already downed — _ForceRecover on " + akTarget)
+            _ForceRecover(akTarget)
+        Else
+            _Log("[SNBaka] Subdue outcome: victim escaped, was not downed to begin with — no recovery action needed")
+        EndIf
+        _CueResistOutcome("baka_forced", akInitiator, akTarget)
+        If bExpressionsEnabled
+            _ClearExpression(akTarget)
+        EndIf
+        UnlockBoth(akInitiator, akTarget)
+    EndIf
+EndFunction
+
 ; --- Struggle --- [bResistable]
 ; 5-stage grapple. Works on any gender combination.
 ; abFromHit: set ONLY by the on-hit mid-combat path (OnCreatureHitFollower's humanoid branch) --
@@ -4586,6 +4780,14 @@ Function Struggle_Execute(Actor akInitiator, Actor akTarget, Bool abFromHit = Fa
     EndIf
     If !LockBoth(akInitiator, akTarget)
         Return
+    EndIf
+    ; In-combat grapple takedown (interact power's Grapple menu, NOT the reactive on-hit pipeline
+    ; where an NPC/creature aggressor is the one passing abFromHit=True): only the player initiating
+    ; while abFromHit is set means this specific call is that path. Drives _SetupPair's ghost
+    ; exemption and _ShouldAbort's new hit-abort check for the duration of this one animation.
+    If abFromHit && akInitiator == PlayerRef
+        _bMidCombatGrappleActive = True
+        _fMidCombatHitBaselineRT = _fLastPlayerHitRT
     EndIf
     RecordAnimation(akInitiator, "Struggle", akTarget.GetDisplayName())
     RecordAnimation(akTarget,    "Struggle", akInitiator.GetDisplayName())
@@ -4649,15 +4851,34 @@ Function Struggle_Execute(Actor akInitiator, Actor akTarget, Bool abFromHit = Fa
     EndIf
 EndFunction
 
+; SkyrimNet's dispatcher needs an exact parameterMapping-count match against the target function --
+; adding abFromHit to ChokeHug_Execute (for the in-combat grapple menu) would otherwise silently
+; break both choke_hug.yaml (ChokeHug) and down_choke.yaml (ChokeHelpless), the same class of bug
+; already fixed once this session for PinHelpless/Struggle (see that wrapper's own comment). Both
+; YAMLs now point here instead.
+Function ChokeHelpless_Execute(Actor akInitiator, Actor akTarget)
+    ChokeHug_Execute(akInitiator, akTarget, False)
+EndFunction
+
 ; --- ChokeHug --- [bResistable]
 ; 5-stage chokehold. Works on any gender combination.
-Function ChokeHug_Execute(Actor akInitiator, Actor akTarget)
+Function ChokeHug_Execute(Actor akInitiator, Actor akTarget, Bool abFromHit = False)
     _Log("[SNBakaACT] ChokeHug ENTER")
-    If !IsEligible(akInitiator, akTarget)
+    If !IsEligible(akInitiator, akTarget, abFromHit)
         Return
     EndIf
     If !LockBoth(akInitiator, akTarget)
         Return
+    EndIf
+    ; In-combat grapple takedown (see Struggle_Execute's identical comment) -- only the player
+    ; initiating with abFromHit set means this specific call is the mid-combat menu path.
+    ; Cached locally: _CleanupPair (run inside PlayPairedSequence, below) already clears
+    ; _bMidCombatGrappleActive before control returns here.
+    Bool wasMidCombat = False
+    If abFromHit && akInitiator == PlayerRef
+        _bMidCombatGrappleActive = True
+        _fMidCombatHitBaselineRT = _fLastPlayerHitRT
+        wasMidCombat = True
     EndIf
     RecordAnimation(akInitiator, "ChokeHug", akTarget.GetDisplayName())
     RecordAnimation(akTarget,    "ChokeHug", akInitiator.GetDisplayName())
@@ -4705,7 +4926,16 @@ Function ChokeHug_Execute(Actor akInitiator, Actor akTarget)
         EndIf
         _DefeatGroundWindow(akInitiator, akTarget)
     Else
-        If !_bAELVictimEscaped
+        If wasMidCombat
+            ; See Subdue_Execute's identical branch: a broken-free grapple target must go straight
+            ; back to combat, not into _RecoveryPeriod's ~10s restrained/bleedout "recovering" hold
+            ; (which reads as calm/helpless, not liberated).
+            _Log("[SNBaka] ChokeHug outcome: mid-combat grapple broken — releasing " + akTarget.GetDisplayName() + " back to combat (not a defeat)")
+            If SNBakaCalm
+                akTarget.DispelSpell(SNBakaCalm)
+            EndIf
+            akTarget.StartCombat(akInitiator)
+        ElseIf !_bAELVictimEscaped
             _Log("[SNBaka] struggle outcome: attacker won the exchange (not a fresh QTE-defeat) — _RecoveryPeriod on " + akTarget)
             _RecoveryPeriod(akTarget, akInitiator, 10.0)
         ElseIf _IsDownedAny(akTarget)
@@ -4970,6 +5200,23 @@ Function Interact_ShowMenu(Actor akTarget, Actor akCaster)
         _Log("[SNBaka] interact blocked: still on cooldown.")
         Return
     EndIf
+
+    ; Target is hostile and actively fighting the caster: open the small, curated in-combat "Grapple"
+    ; menu instead of the normal one. Must come BEFORE the IsEligible check below -- IsEligible's own
+    ; combat gate would otherwise silently reject a mid-fight target right here before this branch
+    ; ever got a look. Creatures are explicitly excluded -- they keep their own separate
+    ; CreatureEscalate pipeline, same creature-guard pattern IsEligible itself uses. No further
+    ; eligibility pre-check here, matching the downed branch above: the real enforcement (distance,
+    ; sex-scene, locks, cooldown) happens inside whichever *_Execute function the menu dispatches to,
+    ; same as it always does.
+    If akTarget.IsHostileToActor(akCaster) && akTarget.IsInCombat() \
+            && !_IsCreatureActor(akTarget) && _CreatureAnimKey(akTarget) == ""
+        _pendingCaster = akCaster
+        _pendingTarget = akTarget
+        SNBakaUI.ShowMidCombatMenu(akCaster, akTarget)
+        Return
+    EndIf
+
     If !IsEligible(akCaster, akTarget)
         Return
     EndIf
@@ -5462,6 +5709,13 @@ Function SellToSlavery_Execute(Actor akSeller, Actor akVictim)
         _Log("[SNBaka] SellToSlavery: blocked — seller is downed")
         Return
     EndIf
+    ; Every other SNBaka_Downed sibling (HelpUp, Capture, ...) checks the target is actually downed
+    ; before doing anything -- this one didn't, so nothing stopped it firing on a fully healthy,
+    ; standing victim (the player included) and sending them straight to auction with no precondition.
+    If !_IsDownedAny(akVictim)
+        _Log("[SNBaka] SellToSlavery: blocked — victim not downed")
+        Return
+    EndIf
     If akVictim != PlayerRef
         ; Simple Slavery auctions the player only — narrate the rest.
         SkyrimNetApi.RegisterEvent("baka_capture", \
@@ -5473,11 +5727,17 @@ Function SellToSlavery_Execute(Actor akSeller, Actor akVictim)
         _Log("[SNBaka] SellToSlavery: disabled in MCM — skipped")
         Return
     EndIf
-    ; Clean the defeat state before the hand-off so the player isn't bleeding out/Acheron-held at the auction.
+    ; Clean the defeat state before the hand-off so the player isn't bleeding out/Acheron-held at the
+    ; auction. _bReleaseRequested only helps if a _DefeatGroundWindow loop happens to be actively
+    ; polling it right now (e.g. victim came from a plain vanilla bleedout or a standalone Acheron
+    ; hold, neither of which has one running) -- UnlockBoth explicitly clears SNBaka.Locked on both
+    ; actors regardless, the same guarantee Capture_Execute gets from its own LockBoth/UnlockBoth
+    ; cycle. Without it, a player sent to auction from one of those states would stay SNBaka.Locked=1
+    ; forever, locked out of every Baka interaction after returning from the auction.
     _ClearAcheronHold(akVictim)
     _bReleaseRequested = True
     StorageUtil.SetIntValue(akVictim, "SNBaka.OnGround", 0)
-    Game.EnablePlayerControls()
+    UnlockBoth(akSeller, akVictim)
     SkyrimNetApi.RegisterEvent("baka_capture", \
         akSeller.GetDisplayName() + " drags " + akVictim.GetDisplayName() + " off to be sold at a slave auction.", \
         akSeller, akVictim)
@@ -5711,6 +5971,30 @@ Function Escalate_Execute(Actor akInitiator, Actor akTarget)
     Else
         _Log("[SNBaka] Escalate_Execute: accepted — external down, escalating directly")
         _DoEscalation(akInitiator, akTarget)   ; no window of ours -> run it now
+    EndIf
+EndFunction
+
+; --- In-combat "Grapple" menu dispatch ---
+; Called by the DLL (MenuMode::MidCombat) when the player picks an option from the small curated
+; menu shown by pressing the power on a target who's hostile and actively fighting them. Local id
+; space, no relation to the normal interact menu's ids (this dispatcher never sees those). abFromHit=
+; True on every branch relaxes IsEligible's attacker-in-combat gate for exactly this call (each
+; *_Execute function stamps _bMidCombatGrappleActive when it sees this combination of flag + player
+; initiator -- see Struggle_Execute's own comment, the pattern every one of these mirrors).
+; Struggle was dropped after live feedback: too slow (5-stage PlayPairedSequence) and visually wrong
+; for "defeat an aggressor to the ground" -- replaced by Subdue, which reuses the exact
+; crouching-straddler/pinned-down pose _DoEscalation already uses for taking a victim to the ground,
+; just made resistable.
+; choice: 0 = Subdue, 1 = Choke Behind
+Function _DispatchMidCombatAction(Int choice, Actor akCaster, Actor akTarget)
+    _Log("[SNBaka] _DispatchMidCombatAction: choice=" + choice + " caster=" + akCaster + " target=" + akTarget)
+    If !akCaster || !akTarget
+        Return
+    EndIf
+    If choice == 0
+        Subdue_Execute(akCaster, akTarget, True)
+    ElseIf choice == 1
+        ChokeHug_Execute(akCaster, akTarget, True)
     EndIf
 EndFunction
 
@@ -6917,6 +7201,14 @@ EndFunction
 ; struggle onto the first with zero breathing room).
 Event OnCreatureHitFollower(string eventName, string strArg, float numArg, Form sender)
     _Log("[SNBaka] OnCreatureHitFollower ENTER: sender=" + sender + " followerToggle=" + bCreatureEscalateFollowersOnHit + " combatAllowed=" + bCreatureCombatAllowed)
+    ; Unconditional, ahead of every gate below: this native event already fires synchronously on
+    ; every physical hit landing on the player, regardless of whether the creature/on-hit-escalation
+    ; feature itself is even enabled. Reused as the zero-lag "player was just struck" signal the
+    ; in-combat grapple takedown's abort check (_ShouldAbort) depends on -- must stamp even when the
+    ; rest of this handler is about to bail on an MCM toggle below.
+    If sender as Actor == PlayerRef
+        _fLastPlayerHitRT = Utility.GetCurrentRealTime()
+    EndIf
     If !bCreatureEscalateFollowersOnHit || !bCreatureCombatAllowed
         _Log("[SNBaka] OnCreatureHitFollower: blocked — bCreatureEscalateFollowersOnHit or bCreatureCombatAllowed is off in MCM")
         Return

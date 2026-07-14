@@ -487,6 +487,35 @@ void PrismaUIBridge::ShowDownedMenu(RE::Actor* caster, RE::Actor* victim) noexce
     s_prisma->Focus(s_view, /*pauseGame=*/true, /*disableFocusMenu=*/false);
 }
 
+void PrismaUIBridge::ShowMidCombatMenu(RE::Actor* caster, RE::Actor* target) noexcept {
+    if (!IsAvailable()) {
+        CreateMenuView();
+        if (!IsAvailable()) {
+            SKSE::log::error("ShowMidCombatMenu: view unavailable.");
+            return;
+        }
+    }
+    if (!caster || !target) {
+        SKSE::log::error("ShowMidCombatMenu: null caster/target.");
+        return;
+    }
+
+    s_midCombatCaster = caster->GetFormID();
+    s_midCombatTarget = target->GetFormID();
+    SKSE::log::info("ShowMidCombatMenu: caster='{}' (0x{:08X}) target='{}' (0x{:08X})",
+        caster->GetDisplayFullName(), s_midCombatCaster,
+        target->GetDisplayFullName(), s_midCombatTarget);
+
+    std::string safe = target->GetDisplayFullName();
+    for (auto& c : safe) if (c == '\'') c = '\x60';
+    const auto script = std::format("window.snbaka_open_midcombat('{}')", safe);
+
+    s_mode = MenuMode::MidCombat;
+    s_prisma->Show(s_view);
+    s_prisma->Invoke(s_view, script.c_str());
+    s_prisma->Focus(s_view, /*pauseGame=*/true, /*disableFocusMenu=*/false);
+}
+
 void PrismaUIBridge::ShowSexSpankMenu(const std::string& json) noexcept {
     if (!IsAvailable()) {
         CreateMenuView();
@@ -580,8 +609,9 @@ void PrismaUIBridge::OnJSChoice(const char* value) noexcept {
     const MenuMode mode = s_mode.exchange(MenuMode::None);
     const int      choice    = value ? std::atoi(value) : -1;
     const float    numArg    = static_cast<float>(choice);
-    const char*    strArg    = (mode == MenuMode::SexSpank) ? "sexspank" :
-                                (mode == MenuMode::Downed)   ? "downed"   : "interact";
+    const char*    strArg    = (mode == MenuMode::SexSpank)  ? "sexspank"  :
+                                (mode == MenuMode::Downed)    ? "downed"    :
+                                (mode == MenuMode::MidCombat) ? "midcombat" : "interact";
 
     // Snapshot C++ actor state so the lambda doesn't race with a future ShowSexSpankMenu.
     const bool                      useCpp  = s_usingCppSexActors;
@@ -593,12 +623,14 @@ void PrismaUIBridge::OnJSChoice(const char* value) noexcept {
     const RE::FormID                eVic    = s_encVictim;
     const RE::FormID                dCaster = s_downedCaster;
     const RE::FormID                dVictim = s_downedVictim;
+    const RE::FormID                mCaster = s_midCombatCaster;
+    const RE::FormID                mTarget = s_midCombatTarget;
     const std::string               spec    = value ? value : "";   // encounter: "role;intensity;flavor;type" or "cancel"
 
     SKSE::log::info("OnJSChoice: mode={} choice={} useCpp={} spec='{}'",
         strArg, choice, useCpp, spec);
 
-    SKSE::GetTaskInterface()->AddTask([numArg, strArg, mode, choice, useCpp, actIds, actCnt, iCaster, iTarget, eAgg, eVic, dCaster, dVictim, spec]() {
+    SKSE::GetTaskInterface()->AddTask([numArg, strArg, mode, choice, useCpp, actIds, actCnt, iCaster, iTarget, eAgg, eVic, dCaster, dVictim, mCaster, mTarget, spec]() {
         auto* vm      = RE::BSScript::Internal::VirtualMachine::GetSingleton();
         auto* handler = RE::TESDataHandler::GetSingleton();
         if (!vm || !handler) {
@@ -718,6 +750,31 @@ void PrismaUIBridge::OnJSChoice(const char* value) noexcept {
                 args, cb);
             delete args;
             SKSE::log::info("Task: _DispatchDownedAction dispatched.");
+            return;
+        }
+
+        // ── MidCombat: dispatch with the actors captured at menu-open ───────────
+        if (mode == MenuMode::MidCombat) {
+            auto* cst = RE::TESForm::LookupByID<RE::Actor>(mCaster);
+            auto* tgt = RE::TESForm::LookupByID<RE::Actor>(mTarget);
+            SKSE::log::info("Task: midcombat dispatch — caster='{}' (0x{:08X}) target='{}' (0x{:08X}) choice={}",
+                cst ? cst->GetDisplayFullName() : "(null)", mCaster,
+                tgt ? tgt->GetDisplayFullName() : "(null)", mTarget, choice);
+            if (!cst || !tgt) {
+                SKSE::log::error("Task: midcombat — actor lookup failed.");
+                return;
+            }
+            auto* args = RE::MakeFunctionArguments(
+                std::int32_t{choice},
+                static_cast<RE::Actor*>(cst),
+                static_cast<RE::Actor*>(tgt));
+            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> cb;
+            vm->DispatchMethodCall(handle,
+                RE::BSFixedString("SkyrimNet_BakaIntegration"),
+                RE::BSFixedString("_DispatchMidCombatAction"),
+                args, cb);
+            delete args;
+            SKSE::log::info("Task: _DispatchMidCombatAction dispatched.");
             return;
         }
 

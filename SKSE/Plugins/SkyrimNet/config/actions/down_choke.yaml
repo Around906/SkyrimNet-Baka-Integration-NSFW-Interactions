@@ -3,7 +3,7 @@ description: |
   Choke a DOWNED, helpless victim by the throat while they lie defeated on the ground — dominating, near-lethal punishment. Valid even while combat is still nominally live, because the target is already beaten and cannot resist. Pure violent domination, not sex.
 questEditorId: SkyrimNet_BakaIntegration
 scriptName: SkyrimNet_BakaIntegration
-executionFunctionName: ChokeHug_Execute
+executionFunctionName: ChokeHelpless_Execute
 
 parameterMapping:
   - type: speaker

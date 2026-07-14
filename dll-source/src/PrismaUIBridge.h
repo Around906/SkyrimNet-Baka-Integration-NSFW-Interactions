@@ -35,6 +35,11 @@ public:
     // comes back to Papyrus _DispatchDownedAction(choice, caster, victim).
     static void ShowDownedMenu(RE::Actor* caster, RE::Actor* victim) noexcept;
 
+    // In-combat "Grapple" menu (Struggle, and eventually Grab Hold / Choke Behind) -- shown instead
+    // of the normal interact menu when the target is hostile and actively fighting the caster. The
+    // pick comes back to Papyrus _DispatchMidCombatAction(choice, caster, target).
+    static void ShowMidCombatMenu(RE::Actor* caster, RE::Actor* target) noexcept;
+
     // Resolves the NPC the player is targeting (crosshair, then nearest-actor
     // fallback).  Returns nullptr if none / only the player.  Called from
     // OnEffectStart so Papyrus runs its sex/escalate/interact checks on the
@@ -58,7 +63,7 @@ public:
 private:
     static void OnJSChoice(const char* value) noexcept;
 
-    enum class MenuMode { None, Interact, SexSpank, Encounter, Downed };
+    enum class MenuMode { None, Interact, SexSpank, Encounter, Downed, MidCombat };
 
     static inline PRISMA_UI_API::IVPrismaUI1* s_prisma = nullptr;
     static inline PRISMA_UI_API::IVPrismaUI2* s_prismav2 = nullptr;
@@ -87,4 +92,10 @@ private:
     // Downed-menu actors captured at menu-open, used when the choice comes back.
     static inline RE::FormID s_downedCaster = 0;
     static inline RE::FormID s_downedVictim = 0;
+
+    // Mid-combat "Grapple" menu actors captured at menu-open, used when the choice comes back. Kept
+    // separate from s_interactCaster/Target (not reused) so an in-flight normal interact menu and
+    // this one can never cross-contaminate each other's captured actors.
+    static inline RE::FormID s_midCombatCaster = 0;
+    static inline RE::FormID s_midCombatTarget = 0;
 };

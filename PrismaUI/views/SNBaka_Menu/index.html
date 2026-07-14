@@ -457,6 +457,16 @@ const DOWNED_ACTIONS = [
   { id: 7, label: 'Untie'       },
 ];
 
+// In-combat "Grapple" menu — shown instead of the normal interact menu when the target is hostile
+// and actively fighting the caster. Local id space (this dispatcher never sees the normal menu's
+// ids, no collision to avoid). Struggle was dropped after live feedback (too slow, visually wrong
+// for a decisive takedown) in favor of Subdue, which isn't offered anywhere else. Drunk Exploit,
+// Grab Hold, and creatures are deliberately never offered here.
+const MIDCOMBAT_ACTIONS = [
+  { id: 0, label: 'Subdue',       qte: true },
+  { id: 1, label: 'Choke Behind', qte: true },
+];
+
 // Mutable "current" tables the tab renderer reads — reset per-open by snbaka_open_interact /
 // snbaka_open_downed below, so _buildTabs()/_selectTab() need no mode-awareness of their own.
 let CATEGORIES = BASE_CATEGORIES;
@@ -590,6 +600,27 @@ window.snbaka_open_downed = function(targetName) {
   _el('footer-hint').textContent = 'Esc · stay down';
   _buildTabs();
   _selectTab('down');
+  _open();
+};
+
+// targetName = the hostile target's display name. Small standalone menu (not a merge — no offset
+// math needed, unlike snbaka_open_downed above): just the curated in-combat grapple actions. Picks
+// dispatch through the same _choose -> _DispatchMidCombatAction, ids unchanged from BASE_ACTIONS.
+window.snbaka_open_midcombat = function(targetName) {
+  g_mode = 'midcombat';
+
+  CATEGORIES = [{ id: 'grapple', label: 'Grapple' }];
+  ACTIONS    = { grapple: MIDCOMBAT_ACTIONS };
+
+  _el('header-label').textContent  = 'Grapple';
+  _el('header-target').textContent = targetName || '';
+  _show('mode-interact');
+  _hide('mode-sex');
+  _hide('mode-encounter');
+  _hide('btn-back');
+  _el('footer-hint').textContent = 'Esc · cancel';
+  _buildTabs();
+  _selectTab('grapple');
   _open();
 };
 

@@ -50,6 +50,11 @@ Function ShowEncounterMenu(Actor akAggressor, Actor akVictim) Global Native
 ;   0 = Escalate, 1 = Investigate, 2 = Inspect, 3 = Stand Back, <0 = cancel/stay down.
 Function ShowDownedMenu(Actor akCaster, Actor akVictim) Global Native
 
+; Show the in-combat "Grapple" menu (target is hostile and actively fighting the caster). The pick
+; comes back to SkyrimNet_BakaIntegration._DispatchMidCombatAction(choice, caster, target):
+;   5 = Struggle (Phase 1 only), <0 = cancel.
+Function ShowMidCombatMenu(Actor akCaster, Actor akTarget) Global Native
+
 ; Show the sex-spank menu panel.  json must be:
 ;   {"names":["Lydia","Serana"],"playerInScene":true}
 ; Result via "SNBaka_MenuChoice" (strArg="sexspank", numArg=choiceId).
