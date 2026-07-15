@@ -1513,12 +1513,34 @@ Function _ClearAggressorBonds(Actor akVictim)
     Int i = 0
     While i < loaded.Length
         Actor a = loaded[i]
-        If a && a != akVictim && a != PlayerRef && !a.IsDead() && a.GetRelationshipRank(akVictim) == 4 && _CreatureAnimKey(a) != ""
-            a.SetRelationshipRank(akVictim, 0)
-            If akVictim != PlayerRef
-                akVictim.SetRelationshipRank(a, 0)
+        If a && a != akVictim && a != PlayerRef && !a.IsDead() && a.GetRelationshipRank(akVictim) == 4
+            Bool isCreatureLink = _CreatureAnimKey(a) != ""
+            ; _PacifyNearbyHostiles (Capture_Execute) ALSO stamps rank 4 on every nearby HUMANOID
+            ; hostile to keep a captor's whole camp from re-opening fire -- but nothing ever reverted
+            ; that for non-creatures, only this creature-only sweep. Confirmed root cause of "enemies/
+            ; followers revive but never re-engage that one actor again": every bandit who was ever
+            ; nearby during a capture stayed permanently "allied" (rank 4) to the victim. Can't just
+            ; widen the creature check to every actor -- rank 4 is vanilla's "Lover"/spouse rank too,
+            ; and blindly clearing it on a humanoid risks breaking a real marriage. SNBaka.Pacified==1
+            ; is the safe tell instead: _PacifyNearbyHostiles only ever pacifies actors who were
+            ; HOSTILE to the victim at the time, and a genuine spouse is never hostile to their own
+            ; spouse, so a real Lover-rank humanoid could never end up flagged pacified this way.
+            Bool isStaleHumanoidAllyLink = !isCreatureLink && StorageUtil.GetIntValue(a, "SNBaka.Pacified", 0) == 1
+            If isCreatureLink || isStaleHumanoidAllyLink
+                a.SetRelationshipRank(akVictim, 0)
+                If akVictim != PlayerRef
+                    akVictim.SetRelationshipRank(a, 0)
+                EndIf
+                _Log("[SNBaka] _ClearAggressorBonds: cleared lover-rank link " + a.GetDisplayName() + " <-> " + akVictim.GetDisplayName())
             EndIf
-            _Log("[SNBaka] _ClearAggressorBonds: cleared lover-rank link " + a.GetDisplayName() + " <-> " + akVictim.GetDisplayName())
+            If isStaleHumanoidAllyLink
+                ; _PacifyNearbyHostiles pacifies the captor's WHOLE nearby group, but only the one
+                ; tracked aggressor ever got un-pacified on release -- every other swept bystander
+                ; stayed calmed/aggression-0 forever. Release them too, now that the rank-4 tell above
+                ; has identified them as one of that sweep.
+                _PacifyActor(a, False)
+                a.EvaluatePackage()
+            EndIf
         EndIf
         ; Stray-Calm sweep (same loop, essentially free): an actor still carrying our Calm effect
         ; while NOT flagged pacified is a leftover from an interrupted cycle — reported as actors
@@ -1528,6 +1550,26 @@ Function _ClearAggressorBonds(Actor akVictim)
         EndIf
         i += 1
     EndWhile
+EndFunction
+
+; Aggression + Calm-dispel alone doesn't reliably make the AI resume a fight on its own once our own
+; suppression lifts -- confirmed for the mid-combat grapple's own release-on-break path (see
+; Subdue_Execute), where nothing but an explicit StartCombat got a freshly-freed hostile target to
+; actually re-engage. Same gap applies anywhere else Baka un-suppresses a pair: if they're STILL
+; genuinely hostile to each other per the game's own faction/relationship state (not because of
+; anything WE were holding, which is already cleared by the time this runs), force it explicitly
+; instead of hoping the engine notices on its own. No-op for any pair that was never actually
+; hostile — a normal social Struggle/Intimate partner correctly does nothing here.
+Function _RestoreHostility(Actor akA, Actor akB)
+    If !akA || !akB || akA.IsDead() || akB.IsDead()
+        Return
+    EndIf
+    If akA.IsHostileToActor(akB)
+        akA.StartCombat(akB)
+    EndIf
+    If akB.IsHostileToActor(akA)
+        akB.StartCombat(akA)
+    EndIf
 EndFunction
 
 ; Pacify EVERYONE near the victim who is hostile to them (the captor's whole group), so a capture
@@ -2706,6 +2748,12 @@ Function _CleanupPair(Actor akA1, Actor akA2, \
             _ReassertDownedProtection(akA2)
         EndIf
     EndIf
+    ; Both actually up (not left down for some other reason) and not about to be immediately
+    ; re-suppressed by a fresh defeat setup a few lines later in the caller (bSkipA2Reset) -- see
+    ; _RestoreHostility's own comment for why this needs to be explicit rather than assumed.
+    If !bSkipA2Reset && !_IsDownedAny(akA1) && !_IsDownedAny(akA2)
+        _RestoreHostility(akA1, akA2)
+    EndIf
 
     If marker1
         marker1.Delete()
@@ -3073,6 +3121,9 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
         If akA1 == PlayerRef || akA2 == PlayerRef
             Game.EnablePlayerControls()
         EndIf
+        ; See _RestoreHostility's own comment: restoring aggression alone doesn't reliably make a
+        ; genuinely hostile pair resume fighting once they're both back up.
+        _RestoreHostility(akA1, akA2)
         _StartCooldown(akA1)
     EndIf
 EndFunction
@@ -5514,6 +5565,10 @@ Function _ForceRecover(Actor akActor, Bool abFullRescue = True)
         ; idempotent sanitize half, which is the only part the handoff needs.
         _Log("[SNBaka] _ForceRecover: " + akActor.GetDisplayName() + " is already up — sanitize only, skipping the get-up ritual")
     EndIf
+    ; See _RestoreHostility's own comment: restoring aggression alone doesn't reliably make a
+    ; genuinely hostile pair resume fighting once they're both back up. trackedThreat is the one
+    ; actor we actually know was adversarial here (whoever downed akActor in the first place).
+    _RestoreHostility(trackedThreat, akActor)
     If isPlayer
         Game.EnablePlayerControls()
         ; OStim sets this for player scenes and a force-stopped/refused scene can strand it — nothing

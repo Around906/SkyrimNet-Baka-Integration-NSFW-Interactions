@@ -76,9 +76,19 @@ namespace {
             "No physical contact.",
             [](RE::Actor* a) { return NotInCombat(a); });
 
+        // Confirmed live bug: this description used to also claim "escalate on a downed victim,
+        // release/free the victim, inspect a captive or investigate a restrained target" -- but none
+        // of those actions were ever actually members of THIS category (customCategory: SNBaka_Scene).
+        // They all live in SNBaka_Downed (cat_snbaka_downed.yaml), which was split out specifically
+        // because ITS category has no combat gate. Nobody updated this category's own description
+        // when that split happened, so the LLM kept picking Scene expecting Escalate/HelpUp/etc. to
+        // be there and found only these two -- "none of the actions are actually available." Fixed to
+        // describe only what's actually here, and points at Down for everything else.
         RegisterOne("SNBaka_Scene",
-            "Manage or control a capture/defeat encounter: escalate on a downed victim, release/free the victim, "
-            "call off or abort, interrupt/stop an active scene, inspect a captive or investigate a restrained target.",
+            "Stop an ongoing Baka Motion animation: the initiator voluntarily calling it off themselves "
+            "(CallOff), or a third party forcing it to stop (InterruptScene). For anything about a downed/"
+            "defeated character instead -- escalate, help up, release, inspect, investigate -- use the "
+            "Down category, not this one.",
             [](RE::Actor* a) { return NotInCombat(a); });
 
         RegisterOne("SNBaka_Expression",
