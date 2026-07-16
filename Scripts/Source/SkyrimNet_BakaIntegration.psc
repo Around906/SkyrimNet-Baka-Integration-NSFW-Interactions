@@ -2229,6 +2229,10 @@ Function PlayPairedSimpleAnim(Actor akA1, Actor akA2, \
         ; resolves a winner via fNPCEscapeChance instead of leaving it ambiguous -- mirror that here.
         If !_HoldAnim(akA1, akA2, animA1, animA2, duration)
             If Utility.RandomFloat(0.0, 99.9) < fNPCEscapeChance
+                ; Set the escape flag too (PlayPairedSequence's fallback already does) -- without it
+                ; the caller's outcome branch reads this break-free as "attacker won" and runs
+                ; _RecoveryPeriod on the escapee, and the escape tail below never releases them.
+                _bAELVictimEscaped = True
                 Debug.SendAnimationEvent(akA1, "Babo_DefeatResist_A1_S2")
                 Debug.SendAnimationEvent(akA2, "Babo_DefeatResist_A2_S2")
                 SkyrimNetApi.RegisterEvent("baka_resist_success", \
@@ -2244,7 +2248,23 @@ Function PlayPairedSimpleAnim(Actor akA1, Actor akA2, \
         _HoldAnim(akA1, akA2, animA1, animA2, duration)
     EndIf
 
+    ; _CleanupPair clears _bMidCombatGrappleActive -- capture it first for the escape tail below.
+    Bool simpleWasMidCombat = _bMidCombatGrappleActive
     _CleanupPair(akA1, akA2, marker1, marker2, a1IsPlayer || a2IsPlayer, _bQTEDefeated)
+    ; MISSING ESCAPE TAIL (confirmed live: "actor stuck non-aggressive and nothing targeted her") --
+    ; PlayPairedSequence ends a victim escape with _PostEscapeGrace, the ONE place the Acheron
+    ; native two-way pacify _SetupPair put on an NPC victim (keyword-backed state only Acheron's own
+    ; API can remove) is released for a winner. This runner never did, so every simple-anim escapee
+    ; (Subdue) kept "ignoring & ignored by combat" FOREVER. Mid-combat grapple: skip the mercy
+    ; window (an escaped enemy resumes the fight immediately, no 5s untouchable beat) but the pacify
+    ; still must end -- release it directly.
+    If _bAELVictimEscaped
+        If simpleWasMidCombat
+            _ReleaseAcheronPacify(akA2)
+        Else
+            _PostEscapeGrace(akA2)
+        EndIf
+    EndIf
 EndFunction
 
 ; --- PlayPairedSequence ---
@@ -2548,11 +2568,19 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
     EndIf
 
     _ProtectNearbyAllies(akA2, akA1, False)
+    ; _CleanupPair clears _bMidCombatGrappleActive -- capture it first for the escape tail below.
+    Bool seqWasMidCombat = _bMidCombatGrappleActive
     _CleanupPair(akA1, akA2, marker1, marker2, a1IsPlayer || a2IsPlayer, _bQTEDefeated)
     ; The victim WON -- keep them untouchable a while longer (see _PostEscapeGrace). Must run AFTER
-    ; _CleanupPair, whose unconditional SetGhost(False) would wipe it.
+    ; _CleanupPair, whose unconditional SetGhost(False) would wipe it. Mid-combat grapple: no mercy
+    ; window (the escaped enemy resumes the fight immediately), but the Acheron pacify from
+    ; _SetupPair still must end -- release it directly.
     If _bAELVictimEscaped
-        _PostEscapeGrace(akA2)
+        If seqWasMidCombat
+            _ReleaseAcheronPacify(akA2)
+        Else
+            _PostEscapeGrace(akA2)
+        EndIf
     EndIf
 EndFunction
 
@@ -5569,6 +5597,14 @@ Function _ForceRecover(Actor akActor, Bool abFullRescue = True)
     ; genuinely hostile pair resume fighting once they're both back up. trackedThreat is the one
     ; actor we actually know was adversarial here (whoever downed akActor in the first place).
     _RestoreHostility(trackedThreat, akActor)
+    ; Stale Acheron pacify release for NPCs too -- this existed only for the player below, so an NPC
+    ; who "got up" through here could keep the native keyword-backed "ignoring & ignored by combat"
+    ; state forever (confirmed live report: stuck non-aggressive AND untargetable, with nothing in
+    ; Papyrus able to remove the keyword). _ReleaseAcheronPacify already refuses to touch an actor
+    ; Acheron currently holds genuinely DEFEATED, so a legit down state is never stripped here.
+    If !isPlayer
+        _ReleaseAcheronPacify(akActor)
+    EndIf
     If isPlayer
         Game.EnablePlayerControls()
         ; OStim sets this for player scenes and a force-stopped/refused scene can strand it — nothing
@@ -5584,6 +5620,77 @@ Function _ForceRecover(Actor akActor, Bool abFullRescue = True)
     EndIf
     akActor.EvaluatePackage()
     _Log("[SNBaka] _ForceRecover: stood up " + akActor.GetDisplayName() + " (player=" + isPlayer + ")")
+EndFunction
+
+; EMERGENCY panic button (MCM > General > Maintenance), for when a liberation path went wrong and
+; left an actor stuck -- non-aggressive, untargetable, frozen, ghosted, whatever. Sweeps every
+; loaded actor and force-clears every hold Baka could have left: pacify/aggression, our Calm spell,
+; the DoNothing AI override, restrain/DontMove/ghost/vehicle-pin/collision, lock flags, and any
+; stale Acheron native pacify (the keyword-backed "ignoring & ignored by combat" state ONLY
+; Acheron's own ReleaseActor can remove -- no Papyrus keyword-stripping exists, which is why stuck
+; actors looked irreversible from the console). Deliberately does NOT touch an actor Acheron
+; currently holds DEFEATED: that state is legitimate and owned by the down pipeline -- HelpUp or
+; the get-up key is the correct way out of it, not this. Returns how many actors had a stuck state.
+Int Function PanicReset()
+    _Log("[SNBaka] PanicReset: EMERGENCY sweep requested from MCM")
+    ; Pop any stuck ground-window loop on its next tick, and drop any half-open transient mode.
+    _bReleaseRequested       = True
+    _bMidCombatGrappleActive = False
+    Bool acheronPresent = StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Present", 0) == 1
+    Actor[] loaded = PO3_SKSEFunctions.GetActorsByProcessingLevel(0)
+    Int cleaned = 0
+    Int i = 0
+    While i < loaded.Length
+        Actor a = loaded[i]
+        If a && a != PlayerRef && !a.IsDead()
+            Bool stalePacify = acheronPresent && !Acheron.IsDefeated(a) && Acheron.IsPacified(a)
+            Bool wasStuck = stalePacify \
+                || StorageUtil.GetIntValue(a, "SNBaka.Locked",   0) == 1 \
+                || StorageUtil.GetIntValue(a, "SNBaka.Pacified", 0) == 1
+            _PacifyActor(a, False)             ; restores original aggression (no-op if never pacified)
+            If SNBakaCalm
+                a.DispelSpell(SNBakaCalm)
+            EndIf
+            _HoldActorAI(a, False)
+            SNBakaUI.SetNoCollision(a, False)
+            _RestoreActorScale(a)
+            a.SetGhost(False)
+            a.SetRestrained(False)
+            a.SetDontMove(False)
+            a.SetVehicle(None)
+            StorageUtil.SetIntValue(a, "SNBaka.Locked",        0)
+            StorageUtil.SetIntValue(a, "SNBaka.StopRequested", 0)
+            ; (SNBaka.OnGround/DownPose/Tied are deliberately left alone -- a genuinely downed actor
+            ; is recovered by the released ground window / HelpUp, not blind-flag-wiped from here.)
+            If stalePacify
+                Acheron.ReleaseActor(a)        ; strips the native pacify AND its keyword
+                _Log("[SNBaka] PanicReset: released stale Acheron pacify on " + a.GetDisplayName())
+            EndIf
+            a.EvaluatePackage()
+            If wasStuck
+                cleaned += 1
+            EndIf
+        EndIf
+        i += 1
+    EndWhile
+    ; The player, explicitly (same treatment, plus controls/camera).
+    If SNBakaCalm
+        PlayerRef.DispelSpell(SNBakaCalm)
+    EndIf
+    SNBakaUI.SetNoCollision(PlayerRef, False)
+    PlayerRef.SetGhost(False)
+    PlayerRef.SetRestrained(False)
+    PlayerRef.SetDontMove(False)
+    PlayerRef.SetVehicle(None)
+    StorageUtil.SetIntValue(PlayerRef, "SNBaka.Locked",        0)
+    StorageUtil.SetIntValue(PlayerRef, "SNBaka.StopRequested", 0)
+    Game.EnablePlayerControls()
+    Game.SetPlayerAIDriven(False)
+    If acheronPresent && !Acheron.IsDefeated(PlayerRef) && Acheron.IsPacified(PlayerRef)
+        Acheron.ReleaseActor(PlayerRef)
+    EndIf
+    _Log("[SNBaka] PanicReset: done -- " + cleaned + " actor(s) had a stuck state")
+    Return cleaned
 EndFunction
 
 ; --- Help Up ---

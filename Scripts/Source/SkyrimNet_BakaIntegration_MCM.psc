@@ -3,6 +3,7 @@ Scriptname SkyrimNet_BakaIntegration_MCM extends SKI_ConfigBase
 SkyrimNet_BakaIntegration Property Main Auto
 
 Int _enabledOID
+Int _panicOID
 Int _playerTargetOID
 Int _femaleOnlyOID
 Int _animatedTearsOID
@@ -112,6 +113,12 @@ Event OnPageReset(String page)
         EndIf
         _slaveryDistOID = AddSliderOption("Player Distance to Allow It", Main.fSlaveryPlayerDistance, "{0}")
         _tiedHoursOID   = AddSliderOption("Tied Prisoner Duration",      Main.fTiedHours, "{0} h")
+        AddEmptyOption()
+        AddHeaderOption("Maintenance")
+        ; Panic button: force-clears every hold Baka (or a stale Acheron pacify) could have left on
+        ; any loaded actor -- for actors stuck non-aggressive/untargetable after something went wrong.
+        ; Leaves genuinely downed/defeated actors alone (HelpUp / the get-up key is their way out).
+        _panicOID = AddTextOption("EMERGENCY: reset stuck actor states", "RUN")
     ElseIf page == "Timing"
         SetCursorFillMode(TOP_TO_BOTTOM)
         AddHeaderOption("Animation Durations")
@@ -179,6 +186,9 @@ Event OnOptionSelect(Int option)
     If option == _enabledOID
         Main.bEnabled = !Main.bEnabled
         SetToggleOptionValue(_enabledOID, Main.bEnabled)
+    ElseIf option == _panicOID
+        Int stuck = Main.PanicReset()
+        Debug.Notification("Baka: emergency reset done — " + stuck + " actor(s) had a stuck state.")
     ElseIf option == _animatedTearsOID
         Main.bAnimatedTearsEnabled = !Main.bAnimatedTearsEnabled
         SetToggleOptionValue(_animatedTearsOID, Main.bAnimatedTearsEnabled)
