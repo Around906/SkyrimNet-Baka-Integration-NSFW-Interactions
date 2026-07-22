@@ -1,0 +1,59 @@
+name: SitOnLap
+description: |
+  YOU settle onto the LAP OF A PERSON who is currently sitting on a chair or bench — an affectionate,
+  playful, or flirtatious gesture. If someone invites you onto their lap ("come sit on my lap"), THIS
+  is the action to use — NOT SitOrLayDown (that one sits on furniture/the ground, not on a person).
+  Requires the Immersive Lap Sitting mod (the action silently does nothing without it).
+
+  STRICT REQUIREMENTS:
+  - The target must be ACTUALLY SEATED right now (on a chair, bench, or similar). Never use on
+    someone standing, walking, working, or lying down.
+  - You must be standing, close to them, and out of combat.
+  - Fits an established warm/intimate/playful moment — a lover, close friend, or bold flirt. Do NOT
+    use on strangers who would object, or in tense/hostile situations.
+
+  CONSEQUENCES:
+  - You sit on their lap and stay there until the moment passes (standing up or the player moving
+    away ends it naturally). Only one lap-sit can be active at a time.
+
+questEditorId: SkyrimNet_BakaIntegration
+scriptName: SkyrimNet_BakaIntegration
+executionFunctionName: LapSit_Execute
+
+parameterMapping:
+  - type: speaker
+    name: akSitter
+    description: YOU — the one sitting down on the target's lap. Never the player.
+  - type: dynamic
+    name: akSeated
+    description: The person whose lap is sat on — must be currently seated (player or NPC).
+
+enabled: false  # disabled until the lap-sit AI hold (_HoldActorAI) issue is fixed
+defaultPriority: 2
+# Deliberately UNCATEGORIZED (no customCategory): confirmed live, filed under SNBaka_Intimate the
+# LLM never found it — it picks a category FIRST, Intimate's description says nothing about laps,
+# and the similarly-named core SitOrLayDown sat at top level and won ("sit on my lap" → NPC
+# sandbox-sat on furniture instead). Top-level placement puts the two side by side so the
+# names/descriptions can actually compete.
+eligibilityRules:
+  - conditions:
+      - decoratorName: "is_in_combat"
+        arguments: ["currentActor"]
+        comparisonOperator: "=="
+        expectedValue: false
+    logicalOperator: "AND"
+    required: true
+  - conditions:
+      - decoratorName: "get_faction_rank"
+        arguments: ["currentActor", "OStimExcitementFaction"]
+        comparisonOperator: "<"
+        expectedValue: 0
+    logicalOperator: "AND"
+    required: true
+  - conditions:
+      - decoratorName: "is_busy"
+        arguments: ["currentActor"]
+        comparisonOperator: "=="
+        expectedValue: false
+    logicalOperator: "AND"
+    required: true

@@ -167,6 +167,10 @@ Bool Property bSellToSlavery       = True  Auto  ; allow the Sell-to-Slavery act
 ; the LLM can't confuse them. Default OFF: it permanently removes a follower from the party.
 Bool  Property bFollowerSlavery       = False  Auto
 Float Property fSlaveryPlayerDistance = 1500.0 Auto  ; player must be at least this far (or downed too) for EnslaveFollower to fire
+; ===== Plugin: Immersive Lap Sitting (less dialogue) =====
+; Soft integration (autodetected, MCM > Plugins): lets the LLM have a speaker settle onto the lap of
+; a currently-SEATED actor (player or NPC) by driving that mod's own quest/spell machinery.
+Bool Property bLapSitEnabled = True Auto
 ; TIED prisoners: a tied victim stays down in the captured pose for this many GAME hours — the
 ; auto-get-up timer is suspended for the duration, so interrogations get all the time they need.
 ; They cannot get up unless helped (HelpUp unties + lifts) or the binding lapses on its own.
@@ -499,6 +503,21 @@ Function Setup()
         SkyrimNetApi.UnregisterAction("EnslaveFollower")
         _Log("[SNBaka] Setup: bFollowerSlavery is OFF — EnslaveFollower action unregistered")
     EndIf
+    ; Same gate for the Immersive Lap Sitting plugin action (MCM > Plugins).
+    If !IsLapSitInstalled()
+        SkyrimNetApi.UnregisterAction("SitOnLap")
+        _Log("[SNBaka] Setup: Lap Sitting.esp not installed — SitOnLap action unregistered")
+    ElseIf !bLapSitEnabled
+        SkyrimNetApi.UnregisterAction("SitOnLap")
+        _Log("[SNBaka] Setup: bLapSitEnabled is OFF — SitOnLap action unregistered")
+    EndIf
+EndFunction
+
+; Plugin-presence probe for Immersive Lap Sitting (less dialogue) — same GetFormFromFile pattern as
+; the SS++ probe below. 0x80A = its own HSF_LapSitQuest record, read directly from the plugin binary.
+; Shared by Setup(), LapSit_Execute and the MCM.
+Bool Function IsLapSitInstalled()
+    Return Game.GetFormFromFile(0x00080A, "Lap Sitting.esp") != None
 EndFunction
 
 ; Plugin-presence probe for Simple Slavery Plus Plus -- GetFormFromFile is the only detection primitive
@@ -1050,10 +1069,18 @@ Bool Function _PollResist(Actor akA1, Actor akA2, Float duration, \
 
     ; Real-clock elapsed, not a naive tick counter -- see _WaitOrAbort's comment. Confirmed live: this
     ; exact loop logged window=2.2s but ran 9 real seconds under concurrent VM load.
+    ;
+    ; While the AEL Flash minigame is running, IT owns the pacing -- `duration` (the anim-hold time)
+    ; is deliberately NOT the cap here. Confirmed live regression after the real-clock fix: a 4s
+    ; window force-closed the still-running minigame mid-game ("QTE stopped abruptly in half of it").
+    ; Pre-fix, VM lag stretched the tick-counted window enough that the game always got to finish --
+    ; that accident was the only thing making it work. The +30s is purely a hang-safety net for the
+    ; case where AEL never fires GameEnd at all.
     Float startRT  = Utility.GetCurrentRealTime()
+    Float qteCap   = duration + 30.0
     Float tick     = 0.1
     Float sinceRe  = 0.0
-    While (Utility.GetCurrentRealTime() - startRT) < duration && !_bAELStruggleComplete && !_ShouldAbort(akA1, akA2)
+    While (Utility.GetCurrentRealTime() - startRT) < qteCap && !_bAELStruggleComplete && !_ShouldAbort(akA1, akA2)
         Utility.Wait(tick)
         sinceRe += tick
         ; Re-assert the held pose ~every 2s so the actors don't drift off-anim during the QTE.
@@ -1374,6 +1401,18 @@ Function _ClearAcheronHold(Actor ak, Bool abFullRescue = True, Bool abKeepPacifi
             EndIf
         Else
             _Log("[SNBaka] _ClearAcheronHold: Acheron no longer considers " + ak.GetDisplayName() + " defeated -- skipping RescueActor/ReleaseActor")
+            ; We were called because the actor still reads held/bleeding, yet Acheron's tracking has
+            ; already disowned them -- the redown-vs-queued-rescue race (AcheronNG's async rescue task
+            ; un-tracks a defeat the bridge just re-applied) leaves the actor VISUALLY stuck in the
+            ; defeat pose with no native state left for anyone to rescue them out of. Confirmed live:
+            ; follower stuck in the defeated animation after HelpUp, unrescuable (every downed-check
+            ; reads False). RescueActor is what normally ends the pose natively; with it skipped,
+            ; force the graph out ourselves. Both events are harmless no-ops on a clean actor.
+            If ak != PlayerRef
+                ak.RestoreActorValue("Health", 1000.0)   ; a bleedout-threshold HP level would re-drop them instantly
+            EndIf
+            Debug.SendAnimationEvent(ak, "BleedoutStop")
+            Debug.SendAnimationEvent(ak, "IdleForceDefaultState")
         EndIf
         _Log("[SNBaka] _ClearAcheronHold: cleared Acheron hold on " + ak.GetDisplayName() + " (abFullRescue=" + abFullRescue + " keepPacified=" + abKeepPacified + ")")
     EndIf
@@ -2042,6 +2081,12 @@ EndFunction
 ; pained/surprised/confused). _ApplyMoodExpression silently no-ops on an unrecognized mood string.
 Function Express_Execute(Actor akInitiator, Actor akTarget, String mood)
     _Log("[SNBakaACT] Express ENTER mood=" + mood)
+    ; Same class of gap fixed in _PlaySoloHold: a bare facial expression is otherwise LLM-invisible --
+    ; nothing ever told SkyrimNet this happened. Solo (matches the doc comment: "target is ignored").
+    If akInitiator && bExpressionsEnabled
+        SkyrimNetApi.RegisterEvent("baka_pose", \
+            akInitiator.GetDisplayName() + "'s face shows " + mood + ".", akInitiator, None)
+    EndIf
     _HoldMoodExpression(akInitiator, mood)
 EndFunction
 
@@ -2414,7 +2459,10 @@ Function PlayPairedSequence(Actor akA1, Actor akA2, \
             Float stageElapsed = 0.0
             Float sinceRe = 0.0
             Float tick = 0.1
-            Float maxWait = effStageTimer * animsA1.Length + 10.0
+            ; +40 not +10: while the AEL minigame runs it owns the pacing (see _PollResist's
+            ; identical fix) -- the stage-time budget alone cut the still-running Flash game off
+            ; mid-QTE once the real-clock fix made this cap actually accurate.
+            Float maxWait = effStageTimer * animsA1.Length + 40.0
             Int stageIdx = 0
             ; Hold stage 0 for the ENTIRE QTE — no longer advances stages on stageTimer while the
             ; struggle is still undecided. That used to let the visible pose drift completely out of
@@ -2984,54 +3032,26 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
     ; reasoning as _WaitOrAbort) so it isn't itself inflated by VM load. Tied victims are excluded:
     ; TieUp_Execute is its own explicit, opt-in "keep them down" mechanic with its own duration.
     Float startDownRT = Utility.GetCurrentRealTime()
+    ; LATENCY (confirmed live: "why does it sometimes take so long from power press to execution on a
+    ; downed target"): menu/LLM picks used to be consumed at the TAIL of each tick, behind a full po3
+    ; loaded-actor presence scan that ran EVERY 0.2s tick. Under a congested VM each "0.2s" tick
+    ; really takes 0.5-2s of work, so a click waited out the whole heavy tick body -- sometimes
+    ; several real seconds -- just to be NOTICED. Two fixes: picks are consumed FIRST each tick, and
+    ; the expensive presence scan runs on its own ~1.5s cadence (it guards a 20-second countdown; 5Hz
+    ; bought nothing but VM load).
+    Float sinceScan = 99.0   ; force a scan on the first tick
     While elapsed < fEscalationWindow && !escalated && !sceneTookOver && !_bReleaseRequested && !_bStandBack && !agedOut
         Utility.Wait(tick)
         elapsed += tick
         sinceHold += tick
-        ; A sex scene has taken the victim — started by Baka's Escalate OR by ANOTHER mod (OStimNet /
-        ; SexLab) that we don't drive. Stop managing them immediately so we never recover or re-pose them
-        ; mid-scene (that yanks the body out of the running animation). Exit and hand them to the scene.
-        If IsInSexAnimation(akA2)
-            sceneTookOver = True
-        EndIf
-        ; PRESENCE-BASED HOLD (same model as Downed_SkyrimNet — same ~10m/700-unit radius): while ANY
-        ; actor is near the victim, keep them down — reset the recover countdown (elapsed). They only
-        ; stand up once the area has cleared for fEscalationWindow seconds, or via Escalate / Release /
-        ; HelpUp. This is what stops an attacker "backing up" and the victim popping up mid-sequence.
-        If _AnyActorNear(akA2, 700.0)
-            elapsed = 0.0
-        EndIf
-        If !sceneTookOver && StorageUtil.GetIntValue(akA2, "SNBaka.Tied", 0) != 1 \
-                && (Utility.GetCurrentRealTime() - startDownRT) >= fEscalationWindow
-            agedOut = True
-            _Log("[SNBaka] _DefeatGroundWindow: aged out after " + fEscalationWindow + "s (Acheron absent, not tied) — recovering regardless of nearby presence")
-        EndIf
+        sinceCue  += tick
+        sinceScan += tick
         If _bResetDownWindow
             ; An aggressor just interacted with the downed victim (LLM inspect/etc.) — keep them down
             ; and protected.
             _bResetDownWindow = False
             elapsed = 0.0
             _Log("[SNBaka] _DefeatGroundWindow: down timer reset by interaction")
-        EndIf
-        If sinceHold >= 3.0 && !sceneTookOver
-            ; Re-assert the SAME cached down pose so the engine/AI can't reclaim the actor and
-            ; visibly swap the pose. Static pose -> safe to re-assert for the player too (it's only
-            ; an anim event, not SetDontMove, so it won't lock the camera). NEVER re-pose once a sex
-            ; scene has taken over, or the down pose fights the running sex animation.
-            sinceHold = 0.0
-            String dp = StorageUtil.GetStringValue(akA2, "SNBaka.DownPose", "")
-            If dp != ""
-                Debug.SendAnimationEvent(akA2, dp)
-            EndIf
-        EndIf
-        ; Nothing decided yet — the initial baka_defeat cue fired once and the attacker may just sit on
-        ; it (an LLM turn can easily miss a one-shot cue). Re-cue every ~15s so "the attacker overpowered
-        ; them and just stands there" doesn't go silent — same idea as Acheron's periodic reminder, kept
-        ; here too since this window runs standalone (no Acheron involved).
-        sinceCue += tick
-        If sinceCue >= 15.0 && !sceneTookOver
-            sinceCue = 0.0
-            _CueDecisionIfDowned(akA1, akA2, False)   ; passive reminder — do NOT reset the recovery clock
         EndIf
         If _bEscalateRequested
             _bEscalateRequested = False
@@ -3071,6 +3091,46 @@ Function _DefeatGroundWindow(Actor akA1, Actor akA2)
             Else
                 _Log("[SNBaka] _DefeatGroundWindow: replay done — PLAYER victim")
             EndIf
+        EndIf
+        If sinceScan >= 1.5
+            sinceScan = 0.0
+            ; A sex scene has taken the victim — started by Baka's Escalate OR by ANOTHER mod (OStimNet /
+            ; SexLab) that we don't drive. Stop managing them immediately so we never recover or re-pose
+            ; them mid-scene (that yanks the body out of the running animation).
+            If IsInSexAnimation(akA2)
+                sceneTookOver = True
+            EndIf
+            ; PRESENCE-BASED HOLD (same model as Downed_SkyrimNet — same ~10m/700-unit radius): while ANY
+            ; actor is near the victim, keep them down — reset the recover countdown (elapsed). They only
+            ; stand up once the area has cleared for fEscalationWindow seconds, or via Escalate / Release /
+            ; HelpUp. This is what stops an attacker "backing up" and the victim popping up mid-sequence.
+            If !sceneTookOver && _AnyActorNear(akA2, 700.0)
+                elapsed = 0.0
+            EndIf
+        EndIf
+        If !sceneTookOver && StorageUtil.GetIntValue(akA2, "SNBaka.Tied", 0) != 1 \
+                && (Utility.GetCurrentRealTime() - startDownRT) >= fEscalationWindow
+            agedOut = True
+            _Log("[SNBaka] _DefeatGroundWindow: aged out after " + fEscalationWindow + "s (Acheron absent, not tied) — recovering regardless of nearby presence")
+        EndIf
+        If sinceHold >= 3.0 && !sceneTookOver
+            ; Re-assert the SAME cached down pose so the engine/AI can't reclaim the actor and
+            ; visibly swap the pose. Static pose -> safe to re-assert for the player too (it's only
+            ; an anim event, not SetDontMove, so it won't lock the camera). NEVER re-pose once a sex
+            ; scene has taken over, or the down pose fights the running sex animation.
+            sinceHold = 0.0
+            String dp = StorageUtil.GetStringValue(akA2, "SNBaka.DownPose", "")
+            If dp != ""
+                Debug.SendAnimationEvent(akA2, dp)
+            EndIf
+        EndIf
+        ; Nothing decided yet — the initial baka_defeat cue fired once and the attacker may just sit on
+        ; it (an LLM turn can easily miss a one-shot cue). Re-cue every ~15s so "the attacker overpowered
+        ; them and just stands there" doesn't go silent — same idea as Acheron's periodic reminder, kept
+        ; here too since this window runs standalone (no Acheron involved).
+        If sinceCue >= 15.0 && !sceneTookOver
+            sinceCue = 0.0
+            _CueDecisionIfDowned(akA1, akA2, False)   ; passive reminder — do NOT reset the recovery clock
         EndIf
     EndWhile
 
@@ -3912,7 +3972,8 @@ Function _LogPair(String sFn, Actor akAtk, Actor akVic, Float wantX, Float wantY
         + sLR + (Math.Abs(lr) as Int) + " " + sFB + (Math.Abs(fb) as Int) + " U" + dz \
         + "  dist=" + dist + " rot=" + (rotOffset as Int) \
         + "  [asked R/L=" + (wantX as Int) + " F/B=" + (wantY as Int) + "]"
-    _Notify("[Baka] " + msg)
+    ; File log only -- the on-screen _Notify version outlived its usefulness (positions are tuned
+    ; now, and the corner message fired on every single paired anim).
     _Log("[SNBaka][POS] " + msg + "  aAng=" + (aAng as Int) \
         + "  ATK=" + akAtk.GetDisplayName() + "  VIC=" + akVic.GetDisplayName())
 EndFunction
@@ -4506,6 +4567,12 @@ Function Spanking_Execute(Actor akInitiator, Actor akTarget)
     ApplySpankMark(akTarget)
     ApplyFaceMarks(akTarget)
     _StartTears(akTarget)
+    ; Every DIRECT spank path (SpankTarget/SlapFace/SlapBreast) records this, but the paired-anim
+    ; path never did -- confirmed live: get_spank_state kept reporting has_been_spanked=False (with
+    ; the mark overlay applied!) minutes after two of these spanks, so the decorator's "was just
+    ; spanked, sting is immediate, reaction unresolved" prompt block -- the dedicated signal that
+    ; makes the LLM actually react to a spank -- never activated for menu/LLM spanks.
+    RecordSpank(akTarget, akInitiator.GetDisplayName())
 
     _CueOutcome("baka_forced", \
         akInitiator.GetDisplayName() + " spanked " + akTarget.GetDisplayName() + ".", \
@@ -5459,6 +5526,8 @@ Function _DispatchInteractAction(Int choice)
         CapturedInspect_Execute(cst, tgt)  ; Inspect (captured)
     ElseIf choice == 24
         ArmHold_Execute(cst, tgt)          ; Arm Hold (affectionate)
+    ElseIf choice == 25
+        LapSitPlayer_Execute(cst, tgt)     ; Sit on Lap (plugin: Immersive Lap Sitting; validates + notifies)
     EndIf
 EndFunction
 
@@ -5636,6 +5705,36 @@ Int Function PanicReset()
     ; Pop any stuck ground-window loop on its next tick, and drop any half-open transient mode.
     _bReleaseRequested       = True
     _bMidCombatGrappleActive = False
+    ; Immersive Lap Sitting plugin: SitOnLap's own function can die mid-flight (confirmed live --
+    ; the Papyrus stack for the whole attempt went silent right after the forced chair Activate, no
+    ; error, no verdict logged, while the rest of the game kept running normally) before it ever
+    ; reaches its own alias-clearing rollback. Since "one lap-sit at a time" is enforced purely by
+    ; checking whether these three aliases are still filled, a death like that leaves every future
+    ; attempt silently refused as "already in progress" forever. Clear them here unconditionally --
+    ; harmless no-op if nothing was stuck, since ForceRefTo'ing None-filled aliases is a no-op too.
+    If IsLapSitInstalled()
+        Quest lapQuestReset = Game.GetFormFromFile(0x00080A, "Lap Sitting.esp") as Quest
+        If lapQuestReset
+            ReferenceAlias lapA0 = lapQuestReset.GetAlias(0) as ReferenceAlias
+            ReferenceAlias lapA1 = lapQuestReset.GetAlias(1) as ReferenceAlias
+            ReferenceAlias lapA2 = lapQuestReset.GetAlias(2) as ReferenceAlias
+            ObjectReference staleChair = lapA2.GetReference()
+            If lapA0
+                lapA0.Clear()
+            EndIf
+            If lapA1
+                lapA1.Clear()
+            EndIf
+            If lapA2
+                lapA2.Clear()
+            EndIf
+            If staleChair
+                staleChair.Disable()
+                staleChair.Delete()
+                _Log("[SNBaka] PanicReset: cleared a stale Lap Sitting chair/aliases")
+            EndIf
+        EndIf
+    EndIf
     Bool acheronPresent = StorageUtil.GetIntValue(PlayerRef, "SNAcheron.Present", 0) == 1
     Actor[] loaded = PO3_SKSEFunctions.GetActorsByProcessingLevel(0)
     Int cleaned = 0
@@ -5666,6 +5765,14 @@ Int Function PanicReset()
                 Acheron.ReleaseActor(a)        ; strips the native pacify AND its keyword
                 _Log("[SNBaka] PanicReset: released stale Acheron pacify on " + a.GetDisplayName())
             EndIf
+            ; Pose rescue: an actor can be stuck in the defeat/bleedout ANIMATION with every flag
+            ; already clean (the redown-vs-queued-rescue race, see _ClearAcheronHold) -- flag sweeps
+            ; alone can't see or fix that, and HelpUp refuses ("target not downed"). Force the graph
+            ; back to default for anyone NOT genuinely downed; no-op on actors standing normally.
+            If !_IsDownedAny(a) && !(acheronPresent && Acheron.IsDefeated(a))
+                Debug.SendAnimationEvent(a, "BleedoutStop")
+                Debug.SendAnimationEvent(a, "IdleForceDefaultState")
+            EndIf
             a.EvaluatePackage()
             If wasStuck
                 cleaned += 1
@@ -5688,6 +5795,12 @@ Int Function PanicReset()
     Game.SetPlayerAIDriven(False)
     If acheronPresent && !Acheron.IsDefeated(PlayerRef) && Acheron.IsPacified(PlayerRef)
         Acheron.ReleaseActor(PlayerRef)
+    EndIf
+    ; Same pose rescue the NPC sweep gets -- the redown-vs-rescue race can leave the PLAYER visually
+    ; collapsed with clean flags too. No-op when standing normally.
+    If !_IsDownedAny(PlayerRef) && !(acheronPresent && Acheron.IsDefeated(PlayerRef))
+        Debug.SendAnimationEvent(PlayerRef, "BleedoutStop")
+        Debug.SendAnimationEvent(PlayerRef, "IdleForceDefaultState")
     EndIf
     _Log("[SNBaka] PanicReset: done -- " + cleaned + " actor(s) had a stuck state")
     Return cleaned
@@ -5747,6 +5860,9 @@ Function HelpUp_Execute(Actor akInitiator, Actor akTarget)
         Game.ForceThirdPerson()   ; idles are invisible in first person
         Debug.SendAnimationEvent(akInitiator, "IdleTake")
         Utility.Wait(2.0)
+        ; NOT self-resetting after all -- confirmed live: the player's upper body stayed stuck in the
+        ; take pose afterward. Same explicit reset the NPC branch always had.
+        Debug.SendAnimationEvent(akInitiator, "IdleForceDefaultState")
     ElseIf !akInitiator.IsInCombat()
         Debug.SendAnimationEvent(akInitiator, "Babo_Kneel")
         Utility.Wait(2.0)
@@ -5978,6 +6094,249 @@ Function EnslaveFollower_Execute(Actor akCaptor, Actor akFollower)
     EndIf
 EndFunction
 
+; --- SitOnLap (plugin: Immersive Lap Sitting) ---
+; The speaker settles onto the lap of a currently-SEATED actor (player or NPC), by driving that
+; mod's own machinery exactly the way its "sit on my lap" dialogue fragment does (read from its
+; compiled TIF): fill quest alias 0 (LapSitNPC) with the sitter, self-cast HSF_LapSitSpell on the
+; lap OWNER (whose position the invisible chair is aligned to), start its hold-still scene. The
+; mod's own chair script handles the entire lifecycle from there, including cleanup when the
+; player walks away. Soft dependency -- every form is resolved per-call via GetFormFromFile, and
+; Setup()/the MCM keep the action out of the LLM's menu when the esp is absent or the toggle off.
+; LLM-facing entry (YAML lap_sit.yaml — exact 2-param arity match for SkyrimNet's dispatcher).
+; Player-as-sitter is blocked on this path; the interact menu's own entry goes through
+; LapSitPlayer_Execute below instead.
+Function LapSit_Execute(Actor akSitter, Actor akSeated)
+    _DoLapSit(akSitter, akSeated, False)
+EndFunction
+
+; Interact-menu entry (menu id 25, "Sit on Lap"): the PLAYER sits on the seated target's lap.
+; Menu path notifies on failure -- a clicked button that silently does nothing reads as broken.
+Function LapSitPlayer_Execute(Actor akCaster, Actor akTarget)
+    If akCaster != PlayerRef
+        Return
+    EndIf
+    _DoLapSit(PlayerRef, akTarget, True)
+EndFunction
+
+Function _DoLapSit(Actor akSitter, Actor akSeated, Bool abPlayerSitter)
+    _Log("[SNBakaACT] SitOnLap ENTER (playerSitter=" + abPlayerSitter + ")")
+    If !bEnabled || !bLapSitEnabled || !akSitter || !akSeated || akSitter == akSeated
+        If abPlayerSitter && !bLapSitEnabled
+            _Notify("Lap Sitting is disabled in the Baka MCM (Plugins page).")
+        EndIf
+        Return
+    EndIf
+    If akSitter == PlayerRef && !abPlayerSitter
+        ; The LLM never drives the player onto a lap -- the player does that themselves via the
+        ; interact menu (LapSitPlayer_Execute) or the mod's own dialogue.
+        _Log("[SNBaka] SitOnLap: blocked — player as sitter on the LLM path")
+        Return
+    EndIf
+    Quest lapQuest = Game.GetFormFromFile(0x00080A, "Lap Sitting.esp") as Quest
+    Spell lapSpell = Game.GetFormFromFile(0x000802, "Lap Sitting.esp") as Spell
+    Scene lapScene = Game.GetFormFromFile(0x00080F, "Lap Sitting.esp") as Scene
+    If !lapQuest || !lapSpell
+        _Log("[SNBaka] SitOnLap: blocked — Lap Sitting.esp not installed")
+        If abPlayerSitter
+            _Notify("Sit on Lap requires the Immersive Lap Sitting mod.")
+        EndIf
+        Return
+    EndIf
+    If _IsCreatureActor(akSitter) || _CreatureAnimKey(akSitter) != "" || _IsCreatureActor(akSeated) || _CreatureAnimKey(akSeated) != ""
+        _Log("[SNBaka] SitOnLap: blocked — creature actor")
+        Return
+    EndIf
+    If akSitter.IsInCombat() || akSeated.IsInCombat()
+        _Log("[SNBaka] SitOnLap: blocked — combat")
+        Return
+    EndIf
+    If akSeated.GetSitState() != 3
+        _Log("[SNBaka] SitOnLap: blocked — " + akSeated.GetDisplayName() + " is not actually seated (sitState=" + akSeated.GetSitState() + ")")
+        If abPlayerSitter
+            _Notify(akSeated.GetDisplayName() + " is not sitting on anything.")
+        EndIf
+        Return
+    EndIf
+    If akSitter.GetSitState() != 0
+        _Log("[SNBaka] SitOnLap: blocked — sitter is themselves sitting/transitioning")
+        Return
+    EndIf
+    If akSitter.GetDistance(akSeated) > 600.0
+        _Log("[SNBaka] SitOnLap: blocked — too far apart (" + akSitter.GetDistance(akSeated) + ")")
+        Return
+    EndIf
+    If _IsDownedAny(akSitter) || _IsDownedAny(akSeated) || IsActorLocked(akSitter) || IsActorLocked(akSeated) \
+            || IsInSexAnimation(akSitter) || IsInSexAnimation(akSeated)
+        _Log("[SNBaka] SitOnLap: blocked — an actor is downed/locked/mid-scene")
+        Return
+    EndIf
+    ; ONE lap-sit at a time, globally -- the mod has a single alias + chair flow. Either alias
+    ; occupied (its NPC-on-lap alias 0 OR its player-sits alias 1) means a sit is already running.
+    ReferenceAlias sitterAlias = lapQuest.GetAlias(0) as ReferenceAlias   ; LapSitNPC
+    ReferenceAlias lapOwnerAlias = lapQuest.GetAlias(1) as ReferenceAlias ; SitonLapNPC (the mod's player-sits flow)
+    If !sitterAlias
+        _Log("[SNBaka] SitOnLap: blocked — could not resolve the LapSitNPC alias")
+        Return
+    EndIf
+    If sitterAlias.GetReference() != None || (lapOwnerAlias && lapOwnerAlias.GetReference() != None)
+        _Log("[SNBaka] SitOnLap: blocked — a lap-sit is already in progress (mod supports one at a time)")
+        If abPlayerSitter
+            _Notify("Someone is already sitting on a lap — one at a time.")
+        EndIf
+        Return
+    EndIf
+    ; A start-game-enabled quest can still be found stopped (mod added mid-save, or its RunOnce flag
+    ; after a stop) -- ForceRefTo on a stopped quest silently no-ops, which reads as "did nothing".
+    If !lapQuest.IsRunning()
+        lapQuest.Start()
+        Utility.Wait(0.2)
+        _Log("[SNBaka] SitOnLap: HSF_LapSitQuest was not running — Start() called (running now=" + lapQuest.IsRunning() + ")")
+    EndIf
+    _Log("[SNBaka] SitOnLap: " + akSitter.GetDisplayName() + " sits on " + akSeated.GetDisplayName() + "'s lap (playerSitter=" + abPlayerSitter + ")")
+
+    ; EXACT replication of the mod's two flows, from its DECOMPILED sources (Champollion) -- the
+    ; string-level reverse-engineering had the two flows INVERTED, which is why every earlier attempt
+    ; failed. Ground truth:
+    ;   * Alias 0 (LapSitNPC)   = the NPC whose lap the PLAYER sits on (flow 805, spell/MGEF). The
+    ;     DoNothing scene (0x80F) holds THIS actor still.
+    ;   * Alias 1 (SitonLapNPC) = the NPC who sits on the SEATED PLAYER's lap (flow 807) -- driven by
+    ;     an AI PACKAGE attached to the alias (HSF_SitonLapPkg -> sits in the LapChair alias), never
+    ;     by Activate.
+    ;   * Alias 2 (LapChair)    = the placed invisible chair (the package's sit target).
+    ; The chair script (on the FURN base) owns cleanup for every placed instance: once the player is
+    ; >100 units away it clears all three aliases and deletes itself.
+    Furniture chairBase = Game.GetFormFromFile(0x000803, "Lap Sitting.esp") as Furniture
+    If !chairBase
+        _Log("[SNBaka] SitOnLap: could not resolve the NPCChair furniture — aborting")
+        Return
+    EndIf
+    ReferenceAlias chairAlias = lapQuest.GetAlias(2) as ReferenceAlias   ; LapChair
+    ObjectReference chair = akSeated.PlaceAtMe(chairBase)
+    If !chair
+        _Log("[SNBaka] SitOnLap: PlaceAtMe returned None — aborting")
+        Return
+    EndIf
+    Float ownerZ = akSeated.GetAngleZ()
+    Float ownerY = akSeated.GetAngleY()
+
+    If abPlayerSitter
+        ; Flow 805 replica (player sits on the seated NPC's lap), minus the spell wrapper -- its
+        ; magic effect's entire body is this placement + Activate, and skipping the cast avoids the
+        ; casting-animation problems Spell.Cast caused from script. Constants verbatim from the MGEF.
+        chair.MoveTo(akSeated, 40.0 * Math.Sin(ownerZ + 27.0), 40.0 * Math.Cos(ownerZ + 27.0), 0.0, True)
+        chair.SetAngle(0.0, ownerY, ownerZ - 50.0)
+        chair.SetPosition(chair.GetPositionX(), chair.GetPositionY(), chair.GetPositionZ() + 5.0)
+        If sitterAlias
+            sitterAlias.ForceRefTo(akSeated)   ; alias 0: the lap owner, held by the DoNothing scene
+        EndIf
+        Utility.Wait(0.2)
+        chair.Activate(akSitter)
+        If lapScene
+            lapScene.Start()                   ; holds the owner NPC still while the player sits
+        EndIf
+    Else
+        ; Flow 807 replica (NPC sits on the seated owner's lap). Constants verbatim from the TIF.
+        ; No Activate -- filling alias 1 hands the NPC to the mod's own sit package.
+        If chairAlias
+            chairAlias.ForceRefTo(chair)       ; must be filled BEFORE the sitter alias (package target)
+        EndIf
+        chair.MoveTo(akSeated, 35.0 * Math.Sin(ownerZ + 44.0), 35.0 * Math.Cos(ownerZ + 44.0), 0.0, True)
+        chair.SetAngle(0.0, ownerY, ownerZ - 75.0)
+        chair.SetPosition(chair.GetPositionX(), chair.GetPositionY(), chair.GetPositionZ() + 6.0)
+        If lapOwnerAlias
+            lapOwnerAlias.ForceRefTo(akSitter) ; alias 1 (SitonLapNPC): the package-driven sitter
+        EndIf
+        akSitter.EvaluatePackage()             ; kick the sit package immediately
+        _Log("[SNBaka] SitOnLap: chair placed at " + chair.GetPositionX() + "," + chair.GetPositionY() + "," + chair.GetPositionZ() \
+            + "  sitterAliasTook=" + (lapOwnerAlias && lapOwnerAlias.GetReference() == akSitter) \
+            + "  chairAliasTook=" + (chairAlias && chairAlias.GetReference() == chair))
+        ; NPC-NPC only: the mod's flow assumes a player owner (who holds still by themselves) --
+        ; an NPC owner needs the same scene hold flow 805 gives, or their AI may stand them up.
+        If akSeated != PlayerRef
+            If sitterAlias
+                sitterAlias.ForceRefTo(akSeated)
+            EndIf
+            If lapScene
+                lapScene.Start()
+            EndIf
+        EndIf
+    EndIf
+
+    ; Verify the sitter actually engages the chair. Package-driven sitters WALK there, so allow a
+    ; real approach window; sitState leaves 0 as soon as the furniture grabs them. FOLLOWER
+    ; LIMITATION (suspected live with Ashe, a custom-framework follower): a follower's own
+    ; high-priority follow package can outrank the mod's alias sit package, leaving the sitter
+    ; standing forever -- so if the package hasn't engaged them after a few seconds, force the sit
+    ; with a direct chair Activate (reliable for NPCs on an ACCESSIBLE chair -- the one earlier
+    ; Activate failure was a mis-placed overlapping chair, not the mechanism).
+    ; Real-clock elapsed, NOT a naive tick counter -- same class of bug already found and fixed
+    ; elsewhere this session (_WaitOrAbort, _PollResist, _RecoveryPeriod): under VM load a
+    ; Utility.Wait(0.5) can genuinely take several times longer than 0.5 real seconds, so counting
+    ; "sitWait += 0.5" per iteration silently let this loop's real duration balloon far past its
+    ; nominal 12s cap -- plausibly for minutes, which is long enough to explain a Papyrus call that
+    ; never returns and, if SkyrimNet's action dispatcher processes one call at a time, would
+    ; silence every OTHER actor's actions behind it too (confirmed live: nothing executed for
+    ; anyone for 6+ minutes after one SitOnLap call).
+    Float sitCap = 3.0
+    If !abPlayerSitter
+        sitCap = 12.0
+    EndIf
+    Bool forcedSit = False
+    Float sitStartRT = Utility.GetCurrentRealTime()
+    While (Utility.GetCurrentRealTime() - sitStartRT) < sitCap && akSitter.GetSitState() == 0
+        Utility.Wait(0.5)
+        If !abPlayerSitter && !forcedSit && (Utility.GetCurrentRealTime() - sitStartRT) >= 3.0
+            forcedSit = True
+            ; Confirmed live: a direct chair Activate() ALONE still wasn't enough for a follower --
+            ; her framework's own AI kept reasserting and cancelling the sit transition before it
+            ; could stick, same as the alias package losing to it. _HoldActorAI is the SAME priority-
+            ; 100 DoNothing override every other paired interaction in this file already uses to
+            ; strip exactly this kind of AI interference -- apply it now (not from the start, so the
+            ; mod's own package gets its normal first shot without us fighting it) to give the forced
+            ; Activate a real, uncontested chance to land.
+            _Log("[SNBaka] SitOnLap: package hasn't engaged the sitter after 3s (follower package priority?) — holding their AI and forcing the sit via chair Activate")
+            _HoldActorAI(akSitter, True)
+            chair.Activate(akSitter)
+        EndIf
+    EndWhile
+    If akSitter.GetSitState() == 0
+        _Log("[SNBaka] SitOnLap: sitter never engaged the chair after " + sitCap + "s — rolling back")
+        If forcedSit
+            _HoldActorAI(akSitter, False)
+        EndIf
+        If chairAlias
+            chairAlias.Clear()
+        EndIf
+        If lapOwnerAlias
+            lapOwnerAlias.Clear()
+        EndIf
+        If sitterAlias
+            sitterAlias.Clear()
+        EndIf
+        If lapScene && lapScene.IsPlaying()
+            lapScene.Stop()
+        EndIf
+        chair.Disable()
+        chair.Delete()
+        If abPlayerSitter
+            _Notify("Couldn't sit — try standing right in front of " + akSeated.GetDisplayName() + " and using it again.")
+        EndIf
+        Return
+    EndIf
+    ; Sit confirmed -- release the AI hold now that the furniture state itself is holding them (the
+    ; contested moment was the transition INTO the sit, not staying in it). Leaving the DoNothing
+    ; override on would also block the mod's own chair script from ever getting a package tick to
+    ; notice the player walking away and clean up.
+    If forcedSit
+        _HoldActorAI(akSitter, False)
+    EndIf
+    _Log("[SNBaka] SitOnLap: sitter engaged the chair (sitState=" + akSitter.GetSitState() + ") — mod's chair script owns cleanup from here")
+
+    _CueOutcome("baka_intimate", \
+        akSitter.GetDisplayName() + " settles onto " + akSeated.GetDisplayName() + "'s lap, making themselves comfortable there.", \
+        akSitter, akSeated)
+EndFunction
+
 ; --- TieUp / Untie ---
 ; A TIED victim is a downed actor held in the captured pose whose auto-get-up timer is suspended for
 ; fTiedHours GAME hours (the bridge's tick honors SNBaka.Tied/TiedUntilGT): they cannot get up unless
@@ -6023,6 +6382,7 @@ Function TieUp_Execute(Actor akBinder, Actor akTarget)
         Game.ForceThirdPerson()   ; idles are invisible in first person — the other "no animation" case
         Debug.SendAnimationEvent(akBinder, "IdleTake")
         Utility.Wait(2.0)
+        Debug.SendAnimationEvent(akBinder, "IdleForceDefaultState")   ; IdleTake doesn't reliably self-reset (see HelpUp)
     Else
         Debug.SendAnimationEvent(akBinder, "Babo_Kneel")
         Utility.Wait(2.0)
@@ -6066,6 +6426,7 @@ Function Untie_Execute(Actor akCutter, Actor akTarget)
         Game.ForceThirdPerson()   ; idles are invisible in first person
         Debug.SendAnimationEvent(akCutter, "IdleTake")
         Utility.Wait(2.0)
+        Debug.SendAnimationEvent(akCutter, "IdleForceDefaultState")   ; IdleTake doesn't reliably self-reset (see HelpUp)
     Else
         Debug.SendAnimationEvent(akCutter, "Babo_Kneel")
         Utility.Wait(2.0)
@@ -7536,9 +7897,17 @@ EndFunction
 ; Play one anim event on an NPC and hold it (re-asserted each tick) for fSoloPoseDuration, ending
 ; early on combat or death. Mirrors the paired-hold approach but for a single actor, no positioning.
 ; bLockMove = SetDontMove (for kneel/grovel a bump shouldn't break). Never the player.
-Function _PlaySoloHold(Actor ak, String animEvent, Bool bLockMove = False)
+; cueDesc: confirmed live gap -- EVERY solo pose (Kneel/Dogeza/Meditate/.../Aroused/Drink/Food, 14 of
+; the 15 total pose variants) funnels through this one function, and it never told SkyrimNet/the LLM
+; anything -- pure animation, no narration, ever. An LLM only knows what it's told; a silent pose is
+; invisible to it. Fixed once here instead of in each of the ~15 callers. "" (default) skips the cue
+; for any future caller that genuinely wants a silent hold.
+Function _PlaySoloHold(Actor ak, String animEvent, Bool bLockMove = False, String cueDesc = "")
     If !ak || ak == PlayerRef || ak.IsDead() || ak.IsInCombat()
         Return
+    EndIf
+    If cueDesc != ""
+        SkyrimNetApi.RegisterEvent("baka_pose", cueDesc, ak, None)
     EndIf
     _HoldActorAI(ak, True)
     _PacifyActor(ak, True)
@@ -7572,57 +7941,81 @@ Function _PlaySoloHold(Actor ak, String animEvent, Bool bLockMove = False)
     ak.EvaluatePackage()
 EndFunction
 
-; --- SkyrimNet pose action (single param dispatcher; replaces the old one-yaml-per-pose set) ---
-; poseName selects the clip; PoseAroused/PoseDrink/PoseFood keep their own functions below since
-; they carry real extra logic (gendered variants, blackout/reaction rolls) beyond a plain hold.
-Function Pose_Execute(Actor akInitiator, String poseName)
-    _Log("[SNBakaACT] Pose ENTER poseName=" + poseName)
-    If poseName == "Aroused"
-        PoseAroused_Execute(akInitiator)
-        Return
-    ElseIf poseName == "Drink"
-        PoseDrink_Execute(akInitiator)
-        Return
-    ElseIf poseName == "Food"
-        PoseFood_Execute(akInitiator)
-        Return
-    EndIf
-    String anim = ""
-    Bool lockMove = False
-    If poseName == "Kneel"
-        anim = "Babo_Kneel"
-        lockMove = True
-    ElseIf poseName == "Dogeza"
-        anim = "Babo_Dogeja"
-        lockMove = True
-    ElseIf poseName == "Meditate"
-        anim = "BaboMeditate"
-    ElseIf poseName == "Crouch"
-        anim = "BaboCrouchM"
-    ElseIf poseName == "Sleep"
-        anim = "BaboSleeponBedRoll"
-        lockMove = True
-    ElseIf poseName == "ScratchHead"
-        anim = "BaboIdleScratchingHead"
-    ElseIf poseName == "BraceArm"
-        anim = "BaboIdleHoldon"
-    ElseIf poseName == "HandOnFace"
-        anim = "BaboHandonFace"
-    ElseIf poseName == "HandOnChin"
-        anim = "BaboHandonChin"
-    ElseIf poseName == "Drool"
-        anim = "BaboDroolingFace"
-    ElseIf poseName == "Autograph"
-        anim = "BaboAutograph"
-    ElseIf poseName == "Pickpocket"
-        anim = "BaboExPocketPullout"
-    EndIf
-    If anim == ""
-        _Log("[SNBaka] Pose_Execute: unrecognized poseName '" + poseName + "'")
-        Return
-    EndIf
-    RecordAnimation(akInitiator, "Pose" + poseName, "")
-    _PlaySoloHold(akInitiator, anim, lockMove)
+; --- SkyrimNet pose actions ---
+; Split from the old single-YAML "Pose(poseName)" dispatcher into one action per pose (matching
+; AnimationsGS's own per-pose YAML structure) so each can carry its OWN eligibilityRules instead of
+; all 15 being forced to share one block -- e.g. gating Aroused behind an arousal check without
+; touching Meditate. Each YAML's executionFunctionName points directly at one of these.
+Function PoseKneel_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseKneel ENTER")
+    RecordAnimation(akInitiator, "PoseKneel", "")
+    _PlaySoloHold(akInitiator, "Babo_Kneel", True, akInitiator.GetDisplayName() + " kneels.")
+EndFunction
+
+Function PoseDogeza_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseDogeza ENTER")
+    RecordAnimation(akInitiator, "PoseDogeza", "")
+    _PlaySoloHold(akInitiator, "Babo_Dogeja", True, akInitiator.GetDisplayName() + " drops into a full grovelling bow, forehead to the floor.")
+EndFunction
+
+Function PoseMeditate_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseMeditate ENTER")
+    RecordAnimation(akInitiator, "PoseMeditate", "")
+    _PlaySoloHold(akInitiator, "BaboMeditate", False, akInitiator.GetDisplayName() + " settles into a quiet, meditative pose.")
+EndFunction
+
+Function PoseCrouch_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseCrouch ENTER")
+    RecordAnimation(akInitiator, "PoseCrouch", "")
+    _PlaySoloHold(akInitiator, "BaboCrouchM", False, akInitiator.GetDisplayName() + " crouches low.")
+EndFunction
+
+Function PoseSleep_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseSleep ENTER")
+    RecordAnimation(akInitiator, "PoseSleep", "")
+    _PlaySoloHold(akInitiator, "BaboSleeponBedRoll", True, akInitiator.GetDisplayName() + " beds down to sleep.")
+EndFunction
+
+Function PoseScratchHead_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseScratchHead ENTER")
+    RecordAnimation(akInitiator, "PoseScratchHead", "")
+    _PlaySoloHold(akInitiator, "BaboIdleScratchingHead", False, akInitiator.GetDisplayName() + " scratches at their head, looking unsure.")
+EndFunction
+
+Function PoseBraceArm_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseBraceArm ENTER")
+    RecordAnimation(akInitiator, "PoseBraceArm", "")
+    _PlaySoloHold(akInitiator, "BaboIdleHoldon", False, akInitiator.GetDisplayName() + " braces an arm, tense and uneasy.")
+EndFunction
+
+Function PoseHandOnFace_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseHandOnFace ENTER")
+    RecordAnimation(akInitiator, "PoseHandOnFace", "")
+    _PlaySoloHold(akInitiator, "BaboHandonFace", False, akInitiator.GetDisplayName() + " brings a hand to their face, overwhelmed.")
+EndFunction
+
+Function PoseHandOnChin_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseHandOnChin ENTER")
+    RecordAnimation(akInitiator, "PoseHandOnChin", "")
+    _PlaySoloHold(akInitiator, "BaboHandonChin", False, akInitiator.GetDisplayName() + " rests a hand on their chin, thinking it over.")
+EndFunction
+
+Function PoseDrool_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseDrool ENTER")
+    RecordAnimation(akInitiator, "PoseDrool", "")
+    _PlaySoloHold(akInitiator, "BaboDroolingFace", False, akInitiator.GetDisplayName() + " stares off, slack-jawed and dazed.")
+EndFunction
+
+Function PoseAutograph_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PoseAutograph ENTER")
+    RecordAnimation(akInitiator, "PoseAutograph", "")
+    _PlaySoloHold(akInitiator, "BaboAutograph", False, akInitiator.GetDisplayName() + " mimes signing an autograph.")
+EndFunction
+
+Function PosePickpocket_Execute(Actor akInitiator)
+    _Log("[SNBakaACT] PosePickpocket ENTER")
+    RecordAnimation(akInitiator, "PosePickpocket", "")
+    _PlaySoloHold(akInitiator, "BaboExPocketPullout", False, akInitiator.GetDisplayName() + " slips a hand toward a pocket or pouch.")
 EndFunction
 
 ; Arousal idle — gendered clip (male/female variants), random of two.
@@ -7643,7 +8036,7 @@ Function PoseAroused_Execute(Actor akInitiator)
             ev = "BaboArousedMale02"
         EndIf
     EndIf
-    _PlaySoloHold(akInitiator, ev, False)
+    _PlaySoloHold(akInitiator, ev, False, akInitiator.GetDisplayName() + " shifts restlessly, visibly aroused.")
 EndFunction
 
 ; Drink (female): normally just a drinking idle, but with iDrinkBlackoutChance% she drinks herself
@@ -7675,7 +8068,7 @@ Function PoseDrink_Execute(Actor akInitiator)
         Debug.SendAnimationEvent(akInitiator, "IdleForceDefaultState")
         akInitiator.EvaluatePackage()
     Else
-        _PlaySoloHold(akInitiator, "BaboDrinkNormal", False)
+        _PlaySoloHold(akInitiator, "BaboDrinkNormal", False, akInitiator.GetDisplayName() + " takes a drink.")
     EndIf
 EndFunction
 
@@ -7687,10 +8080,12 @@ Function PoseFood_Execute(Actor akInitiator)
     EndIf
     RecordAnimation(akInitiator, "PoseFood", "")
     String ev = "Babo_FoodEatAnyway"
+    String desc = akInitiator.GetDisplayName() + " eats what's put in front of them despite themselves."
     If Utility.RandomInt(1, 2) == 2
         ev = "Babo_FoodDisgusting"
+        desc = akInitiator.GetDisplayName() + " recoils from the food in disgust."
     EndIf
-    _PlaySoloHold(akInitiator, ev, False)
+    _PlaySoloHold(akInitiator, ev, False, desc)
 EndFunction
 
 ; ============================================================

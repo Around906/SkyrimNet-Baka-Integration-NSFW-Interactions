@@ -36,6 +36,48 @@ characters striking fitting body language while they speak.
 - It needs several frameworks and an animation pack (see **Requirements**) — without them, the relevant
   pieces simply do nothing rather than break.
 
+## How it works
+
+### The Interact power
+
+Everything the LLM can do on its own, you can also trigger yourself with the **Interact power** — a
+lesser power added to your spell list automatically once the mod is set up. It's aimed like any other
+power or shout:
+
+- Point your crosshair at an NPC and cast it — a PrismaUI menu opens with **Affectionate / Forced /
+  Sexual** categories to pick an action from.
+- Aim it at someone **downed or bleeding out** instead, and you get a different menu — Escalate, Help
+  Up, Tie Up, Execute, Release, and so on.
+- Cast it **during your own sex scene** (no target needed) to open a spank menu for your partner(s).
+- Aim it at a **supported hostile creature** and, if creature escalation is enabled, it attempts to pin
+  the nearest valid victim directly instead of opening a menu.
+- A target already locked in another interaction or mid-scene is refused outright — the power won't
+  interrupt something already running.
+
+Think of it as the deliberate, player-driven half of the mod; the LLM-driven half is the same set of
+actions chosen contextually by SkyrimNet's model during roleplay.
+
+### MCM options
+
+Settings are split across six pages:
+
+- **General** — master enable, whether the player can be targeted, target-sex filter, animated tears,
+  AI action cooldown; a **Capture** section (Sell to Slavery, Follower Enslavement, and the
+  player-distance gate for it); and an emergency **panic reset** for stuck actor states.
+- **Timing** — how long each paired animation loop/stage holds (hug, molest, kiss, touch, sequence
+  stages).
+- **Resist** — the struggle QTE (on/off, escape difficulty), NPC-vs-NPC auto-rolled struggles (escape
+  chance, stage duration, post-escape grace), and the fallback defeat window/QTE difficulty.
+- **Spank** — behaviour toggles (player can be spanked, male targets, furniture reactions) and
+  tattoo-mark pacing (spanks per stage, hours per stage).
+- **Scenes & FX** — sex framework selector (Auto/SexLab/OStim); facial expressions (on/off +
+  intensity); the whole **Creatures** block (master toggle, can-target-the-player, mid-combat,
+  escalate-on-hit chance, escalate-to-sex, LLM-gated escalations, victim-sex filter, framework,
+  success chance, group size, and more); corner notifications and debug logging; and the humanoid
+  mid-combat escalate-on-hit settings.
+- **Plugins** — toggles for optional third-party integrations, each auto-greyed-out when the
+  corresponding mod isn't installed.
+
 ## Features
 
 - **Physical interactions** the LLM picks contextually:

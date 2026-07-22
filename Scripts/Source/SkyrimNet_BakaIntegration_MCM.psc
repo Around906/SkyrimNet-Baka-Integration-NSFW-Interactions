@@ -4,6 +4,7 @@ SkyrimNet_BakaIntegration Property Main Auto
 
 Int _enabledOID
 Int _panicOID
+Int _lapSitOID
 Int _playerTargetOID
 Int _femaleOnlyOID
 Int _animatedTearsOID
@@ -66,10 +67,15 @@ Event OnGameReload()
     EndIf
 EndEvent
 
-; Bumped to 2 in v1.1 (added the "Scenes & FX" page).  Increasing this makes SkyUI fire
-; OnVersionUpdate on existing saves so the new page actually appears without a console refresh.
+; Bumped to 2 in v1.1 (added the "Scenes & FX" page), to 3 for the "Plugins" page (Lap Sitting).
+; Increasing this makes SkyUI fire OnVersionUpdate on EXISTING saves so a newly added page actually
+; appears -- without it, an existing save keeps running whatever Pages[] array _BuildPages() last
+; wrote for that save, forever, regardless of what the .psc source says now. Confirmed live:
+; forgot this bump when Plugins was added -- the tab was invisible on an existing save, AND every
+; MCM toggle living on that page (bLapSitEnabled) had never actually been reachable to set, so it
+; was silently stuck at its compiled default the whole time no matter what got clicked.
 Int Function GetVersion()
-    Return 2
+    Return 3
 EndFunction
 
 Event OnVersionUpdate(Int aVersion)
@@ -77,12 +83,13 @@ Event OnVersionUpdate(Int aVersion)
 EndEvent
 
 Function _BuildPages()
-    Pages    = new String[5]
+    Pages    = new String[6]
     Pages[0] = "General"
     Pages[1] = "Timing"
     Pages[2] = "Resist"
     Pages[3] = "Spank"
     Pages[4] = "Scenes & FX"
+    Pages[5] = "Plugins"
 EndFunction
 
 Event OnPageReset(String page)
@@ -179,6 +186,16 @@ Event OnPageReset(String page)
         AddHeaderOption("Humanoids (mid-combat)")
         _humanOnHitOID       = AddToggleOption("Escalate on Hit Mid-Combat (followers + player)", Main.bHumanEscalateOnHit)
         _humanHitChanceOID   = AddSliderOption("Chance to Struggle on Hit", Main.iHumanHitEngageChance as Float, "{0}%")
+    ElseIf page == "Plugins"
+        SetCursorFillMode(TOP_TO_BOTTOM)
+        ; Optional third-party mod integrations — each autodetected, greyed out when the mod is
+        ; absent (same presence-gated pattern as the SS++/FSM toggles on General).
+        AddHeaderOption("Immersive Lap Sitting")
+        If Main.IsLapSitInstalled()
+            _lapSitOID = AddToggleOption("Enable Lap Sitting Actions", Main.bLapSitEnabled)
+        Else
+            _lapSitOID = AddToggleOption("Enable Lap Sitting Actions (mod not installed)", False, OPTION_FLAG_DISABLED)
+        EndIf
     EndIf
 EndEvent
 
@@ -189,6 +206,15 @@ Event OnOptionSelect(Int option)
     ElseIf option == _panicOID
         Int stuck = Main.PanicReset()
         Debug.Notification("Baka: emergency reset done — " + stuck + " actor(s) had a stuck state.")
+    ElseIf option == _lapSitOID
+        Main.bLapSitEnabled = !Main.bLapSitEnabled
+        SetToggleOptionValue(_lapSitOID, Main.bLapSitEnabled)
+        If Main.bLapSitEnabled
+            Debug.Notification("Lap Sitting actions enabled (returns to the action menu after a reload).")
+        Else
+            SkyrimNetApi.UnregisterAction("SitOnLap")
+            Debug.Notification("Lap Sitting actions disabled and removed from the action menu.")
+        EndIf
     ElseIf option == _animatedTearsOID
         Main.bAnimatedTearsEnabled = !Main.bAnimatedTearsEnabled
         SetToggleOptionValue(_animatedTearsOID, Main.bAnimatedTearsEnabled)
